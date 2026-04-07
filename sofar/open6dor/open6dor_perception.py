@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import sys
 import time
+import argparse
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
@@ -38,6 +39,17 @@ def resolve_llm_backend():
     if backend not in {"openai", "qwen"}:
         raise ValueError(f"Unsupported SOFAR_LLM_BACKEND: {backend}")
     return backend
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only run the first N pending task directories after resume/skip filtering.",
+    )
+    return parser.parse_args()
 
 
 def load_qwen_model():
@@ -104,6 +116,17 @@ def should_skip_existing_result(task_dir):
         return False
     result_path = os.path.join(task_dir, "output", "result.json")
     return os.path.exists(result_path)
+
+
+def discover_task_dirs(dataset_root):
+    config_files = sorted(Path(dataset_root).rglob("task_config_new5.json"))
+    task_dirs = []
+    for config_file in config_files:
+        path_str = str(config_file).replace("\\", "/")
+        if "/task_refine_pos/" not in path_str and "/task_refine_rot/" not in path_str and "/task_refine_6dof/" not in path_str:
+            continue
+        task_dirs.append(str(config_file.parent))
+    return sorted(set(task_dirs))
 
 
 def process_dataset(p):
@@ -194,13 +217,15 @@ def process_dataset(p):
 
 
 if __name__ == "__main__":
+    args = parse_args()
     output_dir = runtime_paths.ensure_output_dir()
     run_id, _ = setup_timestamped_logging(output_dir, "open6dor_perception")
     dataset_root = runtime_paths.open6dor_dataset_dir()
-    dataset_paths = sorted(p for p in glob.glob(str(dataset_root / "*" / "*" / "*" / "*")) if os.path.isdir(p))
+    dataset_paths = discover_task_dirs(dataset_root)
     RUN_RECORDS, processed_task_dirs = load_progress(output_dir)
     if processed_task_dirs:
         print(f"[open6dor] resuming from progress file with {len(processed_task_dirs)} completed tasks")
+    print(f"[open6dor] discovered {len(dataset_paths)} task directories")
 
     detection_model = detection.get_model()
     sam_model = sam.get_model()
@@ -247,6 +272,9 @@ if __name__ == "__main__":
         RUN_RECORDS.extend(skipped_existing)
         save_progress(output_dir, run_id, dataset_root, dataset_paths)
         print(f"[open6dor] skipped {len(skipped_existing)} tasks with existing result.json")
+    if args.limit is not None:
+        runnable_dataset_paths = runnable_dataset_paths[:args.limit]
+        print(f"[open6dor] applying --limit {args.limit}, runnable tasks reduced to {len(runnable_dataset_paths)}")
     print(f"[open6dor] pending runnable tasks: {len(runnable_dataset_paths)}")
 
     if llm_backend == "qwen":
