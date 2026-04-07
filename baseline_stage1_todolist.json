@@ -1,0 +1,75 @@
+{
+  "updated_at": "2026-04-02T16:20:00",
+  "tasks": [
+    {
+      "id": "local_runtime_paths",
+      "owner": "local",
+      "status": "done",
+      "title": "统一路径入口并接入关键脚本",
+      "notes": "runtime_paths 已补齐并接入 scripts/serve/open6dor/spatialbench 关键入口"
+    },
+    {
+      "id": "local_eval_and_collectors",
+      "owner": "local",
+      "status": "done",
+      "title": "补齐基线结果汇总与硬样本导出脚本",
+      "notes": "已新增 stage1_collect_baseline.py、修复 eval_open6dor 计数、修复 qwen_inference JSON 提取与target_position字典化"
+    },
+    {
+      "id": "server_upload_changes",
+      "owner": "server",
+      "status": "done",
+      "title": "上传本地修改到 /data/coding/SoFar",
+      "notes": "你已同步最新代码到 /data/coding/SoFar 并可直接运行 open6dor_demo"
+    },
+    {
+      "id": "server_check_assets",
+      "owner": "server",
+      "status": "in_progress",
+      "title": "检查 checkpoints 与 datasets 资源完整性",
+      "notes": "Qwen/Florence/SAM/PointSO/Metric3D/GroundingDINO checkpoint 已验证可加载并支撑 demo/smoke 跑通；SpatialBench 图片数据已补齐并已进入 batch 评测；Open6DOR 数据集也已下载到服务器，待通过 open6dor_perception.py 重新验证目录层级是否与脚本 glob 规则匹配。"
+    },
+    {
+      "id": "server_open6dor_smoke",
+      "owner": "server",
+      "status": "done",
+      "title": "执行 scripts/open6dor_demo.py 单样例 smoke test",
+      "notes": "2026-03-31 已在服务器跑通 open6dor_demo(qwen) 并输出 Result"
+    },
+    {
+      "id": "server_secondary_smoke",
+      "owner": "server",
+      "status": "done",
+      "title": "执行 manipulation/vqa/navigation 三个次级 smoke test",
+      "notes": "2026-04-02 已完成 manipulation/vqa/navigation 三个次级 smoke test：manipulation_demo 已跑通并输出 Result；vqa_demo 在补齐 Metric3D checkpoint 后已跑通并返回约 0.54 的左右两瓶距离；navigation_demo 在补齐 GroundingDINO checkpoint 并应用 ms_deform_attn.py fallback 补丁后已跑通，输出目标中心、朝向向量、转角与目标位置。"
+    },
+    {
+      "id": "server_open6dor_batch",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 open6dor/open6dor_perception.py + eval_open6dor.py",
+      "notes": "Open6DOR 数据集已补齐，待 SpatialBench 跑完后重新执行。上次 0it / 全 0.0 结果发生在数据未就位阶段，当前不作为有效结论。"
+    },
+    {
+      "id": "server_spatialbench_batch",
+      "owner": "server",
+      "status": "in_progress",
+      "title": "执行 spatialbench/eval_spatialbench.py",
+      "notes": "2026-04-02 SpatialBench 数据已补齐并进入正式 batch。历史日志 output/eval_spatialbench_20260402_155626.log 显示已跑到约 48/223；当前脚本已支持 progress 文件断点续跑与 --recover-log 日志恢复，后续优先先把 spatialbench/eval_spatialbench.py 跑完。"
+    },
+    {
+      "id": "server_collect_baseline_outputs",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 scripts/stage1_collect_baseline.py 生成 baseline_results/hard_cases",
+      "notes": "执行顺序固定在 Open6DOR batch 完成之后：先 spatialbench/eval_spatialbench.py 跑完，再 open6dor/open6dor_perception.py，再 open6dor/eval_open6dor.py，最后再运行 stage1_collect_baseline.py。"
+    },
+    {
+      "id": "server_manual_error_analysis_100",
+      "owner": "server",
+      "status": "todo",
+      "title": "从 hard_cases 中抽取 100 条进行人工分类复盘",
+      "notes": ""
+    }
+  ]
+}

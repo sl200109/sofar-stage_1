@@ -1,0 +1,32 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Large runtime assets
+sofar/checkpoints/
+sofar/datasets/
+sofar/output/
+
+# Build / package artifacts
+sofar/SoFar.egg-info/
+*.egg-info/
+build/
+dist/
+
+# Generated logs / temp files
+*.log
+*.tmp
