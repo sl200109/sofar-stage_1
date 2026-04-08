@@ -4,6 +4,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
+import re
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -53,6 +54,13 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+def write_csv_with_fields(path, rows, fieldnames):
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def normalize_error_message(message):
     if not message:
         return ""
@@ -64,6 +72,151 @@ def normalize_error_message(message):
         text = text.replace(src, dst)
     text = " ".join(text.split())
     return text.strip(" :")
+
+
+def timestamp_from_name(path):
+    match = re.search(r"(\d{8}_\d{6})", path.name)
+    return match.group(1) if match else ""
+
+
+def extract_choice_letter(line):
+    match = re.match(r"^\s*([ABCD])(?:[.\s]|$)", line.strip())
+    if not match:
+        return None
+    return match.group(1)
+
+
+def reconstruct_spatialbench_predictions():
+    dataset_path = ROOT_DIR / "datasets" / "6dof_spatialbench" / "spatial_data.json"
+    eval_path = OUTPUT_DIR / "eval_spatialbench.json"
+    if not dataset_path.exists() or not eval_path.exists():
+        return {
+            "available": False,
+            "incorrect_cases": [],
+            "missing_prediction_ids": [],
+        }
+
+    dataset = load_json(dataset_path) or []
+    eval_data = load_json(eval_path) or {}
+    sample_results = {
+        sample["id"]: sample
+        for sample in eval_data.get("samples", [])
+    }
+    logs = sorted(OUTPUT_DIR.glob("eval_spatialbench_*.log"), key=timestamp_from_name)
+    predictions_by_id = {}
+
+    for log_path in logs:
+        start_index = 0
+        next_index = None
+        current_index = None
+        current_prediction = None
+
+        with log_path.open("r", encoding="utf-8", errors="ignore") as f:
+            for raw_line in f:
+                line = raw_line.rstrip("\n")
+                stripped = line.strip()
+
+                recovered_match = re.search(r"recovered (\d+) completed samples", stripped)
+                if recovered_match:
+                    start_index = int(recovered_match.group(1))
+                    next_index = start_index
+                    continue
+
+                resume_match = re.search(r"resuming from progress file with (\d+) completed samples", stripped)
+                if resume_match:
+                    start_index = int(resume_match.group(1))
+                    next_index = start_index
+                    continue
+
+                if "info: [" in line:
+                    if next_index is None:
+                        next_index = start_index
+                    if current_index is not None and current_prediction is not None:
+                        predictions_by_id[current_index] = {
+                            "predicted_letter": current_prediction,
+                            "source_log": log_path.name,
+                        }
+                    current_index = next_index
+                    next_index += 1
+                    current_prediction = None
+                    continue
+
+                failure_match = re.search(r"sample (\d+) failed:", stripped)
+                if failure_match:
+                    failed_id = int(failure_match.group(1))
+                    predictions_by_id[failed_id] = {
+                        "predicted_letter": None,
+                        "source_log": log_path.name,
+                    }
+                    if current_index == failed_id:
+                        current_index = None
+                        current_prediction = None
+                    continue
+
+                if current_index is None:
+                    continue
+
+                letter = extract_choice_letter(stripped)
+                if letter:
+                    current_prediction = letter
+
+        if current_index is not None and current_prediction is not None:
+            predictions_by_id[current_index] = {
+                "predicted_letter": current_prediction,
+                "source_log": log_path.name,
+            }
+
+    letters = "ABCD"
+    incorrect_cases = []
+    missing_prediction_ids = []
+
+    for item in dataset:
+        sample_id = item["id"]
+        result = sample_results.get(sample_id)
+        if not result:
+            continue
+        if result.get("error") is not None:
+            continue
+        if result.get("correct") is not False:
+            continue
+
+        predicted = predictions_by_id.get(sample_id, {})
+        predicted_letter = predicted.get("predicted_letter")
+        if not predicted_letter:
+            missing_prediction_ids.append(sample_id)
+            predicted_text = None
+        else:
+            predicted_index = letters.index(predicted_letter)
+            predicted_text = item["options"][predicted_index]
+
+        correct_letter = letters[item["answer"]]
+        correct_text = item["options"][item["answer"]]
+
+        incorrect_cases.append(
+            {
+                "id": sample_id,
+                "task_type": item["task_type"],
+                "question_type": item["question_type"],
+                "question": item["question"],
+                "options": {
+                    "A": item["options"][0],
+                    "B": item["options"][1],
+                    "C": item["options"][2],
+                    "D": item["options"][3],
+                },
+                "predicted_letter": predicted_letter,
+                "predicted_text": predicted_text,
+                "correct_letter": correct_letter,
+                "correct_text": correct_text,
+                "source_log": predicted.get("source_log"),
+            }
+        )
+
+    return {
+        "available": True,
+        "incorrect_cases": incorrect_cases,
+        "missing_prediction_ids": missing_prediction_ids,
+    }
 
 
 def collect_spatialbench():
@@ -227,6 +380,19 @@ def collect_hard_cases(spatialbench, open6dor, limit):
     return ranked[:limit]
 
 
+def collect_all_hard_cases(spatialbench, open6dor):
+    ranked = []
+    ranked.extend(spatialbench["hard_cases"])
+    ranked.extend(open6dor["hard_cases"])
+
+    def sort_key(item):
+        source_rank = 0 if item["source"] == "spatialbench" else 1
+        status_rank = 0 if item["status"] == "error" else 1
+        return (source_rank, status_rank, str(item["case_id"]))
+
+    return sorted(ranked, key=sort_key)
+
+
 def build_baseline_results(spatialbench, open6dor):
     return {
         "collected_at": datetime.now().isoformat(timespec="seconds"),
@@ -327,9 +493,11 @@ def main():
     open6dor = collect_open6dor()
 
     baseline_results = build_baseline_results(spatialbench, open6dor)
-    hard_cases = collect_hard_cases(spatialbench, open6dor, args.hard_case_limit)
+    all_hard_cases = collect_all_hard_cases(spatialbench, open6dor)
+    hard_cases = all_hard_cases[:args.hard_case_limit]
     error_rows = spatialbench["error_rows"] + open6dor["error_rows"]
-    error_case_summary = build_error_case_summary(hard_cases, error_rows)
+    error_case_summary = build_error_case_summary(all_hard_cases, error_rows)
+    spatialbench_incorrect = reconstruct_spatialbench_predictions()
 
     write_json(OUTPUT_DIR / "baseline_results.json", baseline_results)
     write_json(
@@ -338,22 +506,63 @@ def main():
             "collected_at": datetime.now().isoformat(timespec="seconds"),
             "hard_case_limit": args.hard_case_limit,
             "count": len(hard_cases),
+            "total_available": len(all_hard_cases),
             "cases": hard_cases,
         },
     )
     write_csv(OUTPUT_DIR / "baseline_errors.csv", error_rows)
     write_json(OUTPUT_DIR / "error_case_summary.json", error_case_summary)
+    write_json(
+        OUTPUT_DIR / "spatialbench_incorrect_cases.json",
+        {
+            "collected_at": datetime.now().isoformat(timespec="seconds"),
+            "count": len(spatialbench_incorrect["incorrect_cases"]),
+            "missing_prediction_ids": spatialbench_incorrect["missing_prediction_ids"],
+            "cases": spatialbench_incorrect["incorrect_cases"],
+        },
+    )
+    write_csv_with_fields(
+        OUTPUT_DIR / "spatialbench_incorrect_cases.csv",
+        [
+            {
+                "id": case["id"],
+                "task_type": case["task_type"],
+                "question_type": case["question_type"],
+                "question": case["question"],
+                "predicted_letter": case["predicted_letter"],
+                "predicted_text": case["predicted_text"],
+                "correct_letter": case["correct_letter"],
+                "correct_text": case["correct_text"],
+                "source_log": case["source_log"],
+            }
+            for case in spatialbench_incorrect["incorrect_cases"]
+        ],
+        [
+            "id",
+            "task_type",
+            "question_type",
+            "question",
+            "predicted_letter",
+            "predicted_text",
+            "correct_letter",
+            "correct_text",
+            "source_log",
+        ],
+    )
 
     print(f"[stage1] wrote {OUTPUT_DIR / 'baseline_results.json'}")
     print(f"[stage1] wrote {OUTPUT_DIR / 'hard_cases.json'}")
     print(f"[stage1] wrote {OUTPUT_DIR / 'baseline_errors.csv'}")
     print(f"[stage1] wrote {OUTPUT_DIR / 'error_case_summary.json'}")
+    print(f"[stage1] wrote {OUTPUT_DIR / 'spatialbench_incorrect_cases.json'}")
+    print(f"[stage1] wrote {OUTPUT_DIR / 'spatialbench_incorrect_cases.csv'}")
     print(
         "[stage1] summary: "
         f"spatialbench_available={spatialbench['available']}, "
         f"open6dor_available={open6dor['available']}, "
         f"hard_cases={len(hard_cases)}, "
-        f"errors={len(error_rows)}"
+        f"errors={len(error_rows)}, "
+        f"spatialbench_incorrect_cases={len(spatialbench_incorrect['incorrect_cases'])}"
     )
 
 
