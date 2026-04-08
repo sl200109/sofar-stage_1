@@ -57,6 +57,13 @@ def _repair_invalid_backslash_escape(text):
     return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text)
 
 
+def _parse_numeric_triplet(text):
+    matches = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", text)
+    if len(matches) != 3:
+        return None
+    return [float(value) for value in matches]
+
+
 def _load_qwen_json(output_text):
     cleaned = output_text.replace("```json", "").replace("```", "").strip()
     cleaned = _repair_invalid_backslash_escape(cleaned)
@@ -97,6 +104,32 @@ def _load_open6dor_reasoning_json(output_text):
             return {
                 "calculation_process": "",
                 "target_position": obj,
+            }
+
+    # Fallback: recover a coordinate triplet from natural-language answers.
+    position_patterns = [
+        r"(?is)(?:target|final)\s+position[^[]*(\[[^\]]+\])",
+        r"(?is)position\s+for\s+the\s+.+?\s+is[^[]*(\[[^\]]+\])",
+        r"(?is)thus,\s+the\s+target\s+position[^[]*(\[[^\]]+\])",
+    ]
+    for pattern in position_patterns:
+        match = re.search(pattern, cleaned)
+        if not match:
+            continue
+        triplet = _parse_numeric_triplet(match.group(1))
+        if triplet is not None:
+            return {
+                "calculation_process": "",
+                "target_position": triplet,
+            }
+
+    bracket_triplets = re.findall(r"\[[^\[\]]+\]", cleaned)
+    for candidate in reversed(bracket_triplets):
+        triplet = _parse_numeric_triplet(candidate)
+        if triplet is not None:
+            return {
+                "calculation_process": "",
+                "target_position": triplet,
             }
 
     raise json.JSONDecodeError("No valid Open6DOR reasoning JSON found in model output", cleaned, 0)
@@ -267,7 +300,13 @@ def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, p
                 },
                 {
                     "type": "text",
-                    "text": f"Command: {instruction}\npicked_object_info: {picked_object_info}\nother_objects_info: {other_objects_info}"
+                    "text": (
+                        f"Command: {instruction}\n"
+                        f"picked_object_info: {picked_object_info}\n"
+                        f"other_objects_info: {other_objects_info}\n"
+                        'Return JSON only in the format '
+                        '{"calculation_process": "...", "target_position": [x, y, z]}.'
+                    )
                 },
             ],
         }
@@ -277,7 +316,7 @@ def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, p
         qwen_model,
         processor,
         messages,
-        max_new_tokens=_env_int("SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS", 256),
+        max_new_tokens=_env_int("SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS", 512),
     )
     print(output_text)
     info = _load_open6dor_reasoning_json(output_text)

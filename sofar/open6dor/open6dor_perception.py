@@ -80,17 +80,28 @@ def progress_file_path(output_dir):
     return Path(output_dir) / PROGRESS_FILE
 
 
+def latest_records(records):
+    latest_by_task = {}
+    for record in records:
+        task_dir = record.get("task_dir")
+        if not task_dir:
+            continue
+        latest_by_task[task_dir] = record
+    return list(latest_by_task.values())
+
+
 def save_progress(output_dir, run_id, dataset_root, dataset_paths):
+    normalized_records = latest_records(RUN_RECORDS)
     summary = {
         "run_id": run_id,
         "dataset_root": str(dataset_root),
         "total_tasks": len(dataset_paths),
-        "success_count": sum(1 for item in RUN_RECORDS if item["status"] == "success"),
-        "error_count": sum(1 for item in RUN_RECORDS if item["status"] == "error"),
-        "skipped_count": sum(1 for item in RUN_RECORDS if item["status"] == "skipped"),
-        "processed_count": len(RUN_RECORDS),
-        "remaining_count": max(0, len(dataset_paths) - len(RUN_RECORDS)),
-        "records": RUN_RECORDS,
+        "success_count": sum(1 for item in normalized_records if item["status"] == "success"),
+        "error_count": sum(1 for item in normalized_records if item["status"] == "error"),
+        "skipped_count": sum(1 for item in normalized_records if item["status"] == "skipped"),
+        "processed_count": len(normalized_records),
+        "remaining_count": max(0, len(dataset_paths) - len(normalized_records)),
+        "records": normalized_records,
     }
     progress_path = progress_file_path(output_dir)
     tmp_path = progress_path.with_suffix(".tmp")
@@ -106,9 +117,13 @@ def load_progress(output_dir):
         return [], set()
     with progress_path.open("r", encoding="utf-8") as f:
         progress = json.load(f)
-    records = progress.get("records", [])
-    processed = {item["task_dir"] for item in records}
-    return records, processed
+    records = latest_records(progress.get("records", []))
+    completed = {
+        item["task_dir"]
+        for item in records
+        if item.get("status") in {"success", "skipped"}
+    }
+    return records, completed
 
 
 def should_skip_existing_result(task_dir):

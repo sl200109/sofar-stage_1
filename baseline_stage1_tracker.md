@@ -7,12 +7,12 @@
 
 ## 当前状态
 - 状态：进行中
-- 更新时间：2026-04-02
+- 更新时间：2026-04-07
 - 本地策略：只改代码与文档，不安装依赖，不做真实模型运行。
 - 服务器策略：上传本地修改到 `/data/coding/SoFar` 后执行 smoke test 和后续评测。
 - 当前执行顺序：
-  - 先让 `spatialbench/eval_spatialbench.py` 跑完
-  - 再跑 `open6dor/open6dor_perception.py`
+  - `spatialbench/eval_spatialbench.py` 已跑完
+  - 当前继续跑 `open6dor/open6dor_perception.py`
   - 再跑 `open6dor/eval_open6dor.py`
   - 最后跑 `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
 - 当前默认后端：默认走本地 Qwen，后续服务器命令不再需要执行 `unset SOFAR_LLM_BACKEND`
@@ -36,6 +36,9 @@
   - `output/baseline_results.json`
   - `output/hard_cases.json`
   - `output/baseline_errors.csv`（环境支持时额外导出 `.xlsx`）
+  - `output/error_case_summary.json`
+  - 当前实现支持在 Open6DOR 尚未全量完成时先汇总 SpatialBench 结果与 Open6DOR progress，并在结果中明确标注 partial 状态。
+  - 当前 `hard_cases.json` 会区分 `runtime_error` 与 `incorrect_answer`；`baseline_errors.csv` 仅保留真正的运行时报错；`error_case_summary.json` 进一步按报错内容分组统计计数与示例 case。
 - 已新增动态任务清单：
   - `baseline_stage1_todolist.json`
   - `scripts/stage1_todo.py`
@@ -125,6 +128,31 @@
     - 正常断点续跑：读取 `output/eval_spatialbench_progress.json`
     - 一次性从旧日志恢复：`--recover-log /data/coding/SoFar/output/eval_spatialbench_20260402_155626.log`
   - `Open6DOR` 数据集现已下载到服务器；后续需在 SpatialBench 跑完后重新执行 `open6dor/open6dor_perception.py`，再判断目录层级与感知产物是否正常。
+- 已根据 2026-04-07 的服务器结果确认 `spatialbench/eval_spatialbench.py` 已全量完成：
+  - `sofar/output/eval_spatialbench.json` 与 `sofar/output/eval_spatialbench_progress.json` 均显示：
+    - `processed_samples = 223`
+    - `remaining_samples = 0`
+    - `failed_samples = 2`
+  - 当前全量结果为：
+    - `Position relative accuracy = 0.49056603773584906`
+    - `Position absolute accuracy = 0.24324324324324326`
+    - `Orientation relative accuracy = 0.375`
+    - `Orientation absolute accuracy = 0.22916666666666666`
+    - `Total accuracy = 0.3273542600896861`
+  - 与 README 中官方 SoFar `SpatialBench Total = 43.9` 对照，当前复现结果低约 `11.16` 个百分点；现阶段可确认 pipeline 与全量 batch 已跑通，但数值尚未复现到官方水平。
+- 已根据 2026-04-07 的服务器结果继续推进 `open6dor/open6dor_perception.py`：
+  - 当前 Open6DOR 实际数据目录为 `/data/coding/SoFar/datasets/open6dor_v2/open6dor_v2`
+  - 且任务目录下还存在额外一层子目录（如 `20240824-233645_no_interaction`），因此原先按固定目录深度猜任务目录的逻辑会找错层级。
+  - 已将 `open6dor/open6dor_perception.py` 改为递归查找 `task_config_new5.json` 并反查父目录作为真实任务目录，避免继续受目录层级影响。
+  - 已为 `open6dor/open6dor_perception.py` 新增 `--limit N` 参数，便于先跑小批量任务做速度估计与链路验证，例如：
+    - `python open6dor/open6dor_perception.py --limit 100`
+  - 说明：在未全量生成 `result.json` 之前，`open6dor/eval_open6dor.py` 的全量结果不应直接拿来与论文对照。
+- 已根据 2026-04-08 的服务器日志继续修补 `open6dor/open6dor_perception.py` / `serve/qwen_inference.py`：
+  - `--limit 100` 首批任务已能开始产出 `Successfully saved result .../output/result.json`，说明目录发现逻辑已基本正确。
+  - 当前主要阻塞转为 `Open6DOR reasoning` 输出不稳定：部分样本会返回长段自然语言解释，并在最终 JSON 前被截断，触发 `No valid Open6DOR reasoning JSON found`。
+  - 本地已补两项稳态修复：
+    - `serve/qwen_inference.py`：增强 Open6DOR reasoning 解析器，除标准 JSON 外，还可从自然语言中的 `target/final position [x, y, z]` 片段回收坐标；同时将默认 `SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS` 从 `256` 提高到 `512`。
+    - `open6dor/open6dor_perception.py`：修正 progress 语义，恢复运行时只把 `success/skipped` 视为真正完成；此前失败任务在补丁后可重新参与后续批次，而不会被旧 progress 永久跳过。
 - 已完成上述新增补丁的静态语法检查：
   - `serve/runtime_paths.py`
   - `depth/metric3dv2.py`
@@ -168,15 +196,18 @@
     或设置 `SOFAR_GROUNDINGDINO_TEXT_ENCODER` 指向其本地路径。
 - 在服务器完整仓库中核对并固化批量评测入口的实际参数和结果目录：
   - `python open6dor/open6dor_perception.py`
+  - 当前补充：可先使用 `python open6dor/open6dor_perception.py --limit 100` 做小批量验证与速度估计
   - `python open6dor/eval_open6dor.py`
   - `python spatialbench/eval_spatialbench.py`
   - 当前推荐执行顺序：
-    - `python spatialbench/eval_spatialbench.py`
-    - `python open6dor/open6dor_perception.py`
+    - `python spatialbench/eval_spatialbench.py`（已完成）
+    - `python open6dor/open6dor_perception.py --limit 100`（当前推荐先做）
+    - `python open6dor/open6dor_perception.py`（确认无误后再扩大范围或全量）
     - `python open6dor/eval_open6dor.py`
 - 在服务器执行阶段一结果汇总：
   - `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
-  - 期望生成 `output/baseline_results.json`、`output/hard_cases.json`、`output/baseline_errors.csv`
+  - 当前可在 `open6dor/open6dor_perception.py` 仍在运行期间先执行一轮，用于固化 SpatialBench 全量结果与 Open6DOR 当前进度快照
+  - 期望生成 `output/baseline_results.json`、`output/hard_cases.json`、`output/baseline_errors.csv`、`output/error_case_summary.json`
 - 用动态清单维护进度：
   - `python scripts/stage1_todo.py show`
   - `python scripts/stage1_todo.py set <task_id> --status done --notes "<备注>"`
@@ -186,8 +217,8 @@
 - 本地仓库不包含完整上游依赖模块，无法在本地做真实运行验证。
 - 服务器上 PointSO 实际使用 `small.pth` 还是 `small_finetune.pth` 仍需你运行时确认。
 - Open6DOR / SpatialBench 批量评测脚本的具体 CLI 参数需要在服务器完整仓库内按实际上游文件再核对一次。
-- `spatialbench/eval_spatialbench.py` 当前仍未最终跑完，需先从已保存进度继续执行至完成。
-- `open6dor/open6dor_perception.py` 需要在数据补齐后重新运行一次，确认不再出现 `0it`。
+- `spatialbench/eval_spatialbench.py` 已全量跑完，但当前指标仍显著低于 README 官方结果，需要在后续错误分析中解释 backend / 配置 / checkpoint 差异。
+- `open6dor/open6dor_perception.py` 当前虽已修复目录发现逻辑，但全量任务数约为 4389，若直接全量运行耗时过长，建议先用 `--limit 100` 做速度与稳定性验证。
 
 ## 服务器交接清单
 - 工作目录：
@@ -214,7 +245,8 @@
   - `ls /data/coding/SoFar/output/scene.npy`
   - `ls /data/coding/SoFar/output/picked_obj.npy`
 - 后续评测入口：
-  - `python spatialbench/eval_spatialbench.py`
+  - `python spatialbench/eval_spatialbench.py`（已完成）
+  - `python open6dor/open6dor_perception.py --limit 100`
   - `python open6dor/open6dor_perception.py`
   - `python open6dor/eval_open6dor.py`
   - `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
@@ -228,8 +260,10 @@
   - `scripts/manipulation_demo.py` 已跑通。
   - `scripts/vqa_demo.py` 已跑通。
   - `scripts/navigation_demo.py` 已跑通。
-  - `spatialbench/eval_spatialbench.py` 已进入正式 batch，历史日志显示已跑到约 `48/223`，当前可从 progress 文件或旧日志恢复后继续。
-  - `open6dor/open6dor_perception.py` 与 `open6dor/eval_open6dor.py` 需在数据补齐后重新运行，上一轮 `0it / 0.0` 不作为有效最终结果。
+  - `spatialbench/eval_spatialbench.py` 已全量跑完，结果文件为 `sofar/output/eval_spatialbench.json` 与 `sofar/output/eval_spatialbench_20260407_140902.json`。
+  - `spatialbench/eval_spatialbench.py` 当前全量结果：`Position rel 49.06 / Position abs 24.32 / Orientation rel 37.50 / Orientation abs 22.92 / Total 32.74`，共 223 题，失败样本 2 个。
+  - `open6dor/open6dor_perception.py` 已修复目录发现逻辑并新增 `--limit` 参数，当前建议先用 `--limit 100` 小批量验证，再决定是否全量跑约 4389 个任务。
+  - `open6dor/eval_open6dor.py` 暂未开始本轮有效全量评测；上一轮 `0it / 0.0` 不作为有效最终结果。
 - 预期首批关键产物：
   - `/data/coding/SoFar/output/result.json`
   - `/data/coding/SoFar/output/scene.npy`
