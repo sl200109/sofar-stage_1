@@ -1,0 +1,55 @@
+当前默认就是本地 Qwen，后续服务器命令不需要再执行 unset SOFAR_LLM_BACKEND。
+
+Stage 1 当前进度：
+- demo / smoke 已全部跑通：
+  - scripts/open6dor_demo.py
+  - scripts/manipulation_demo.py
+  - scripts/vqa_demo.py
+  - scripts/navigation_demo.py
+- SpatialBench batch 正在进行中。
+- Open6DOR batch 数据已补齐，但需要在 SpatialBench 跑完后重新执行。
+
+SpatialBench 当前状态：
+- 历史日志：/data/coding/SoFar/output/eval_spatialbench_20260402_155626.log
+- 已跑到约 48 / 223
+- 当前脚本已支持：
+  - 读取 output/eval_spatialbench_progress.json 断点续跑
+  - 通过 --recover-log 从旧日志恢复进度
+
+服务器建议顺序：
+cd /data/coding/SoFar
+python spatialbench/eval_spatialbench.py --recover-log /data/coding/SoFar/output/eval_spatialbench_20260402_155626.log
+python spatialbench/eval_spatialbench.py
+python open6dor/open6dor_perception.py
+python open6dor/eval_open6dor.py
+python scripts/stage1_collect_baseline.py --hard-case-limit 100
+
+如果 SpatialBench 已经成功恢复过一次进度，则后续直接执行：
+cd /data/coding/SoFar
+python spatialbench/eval_spatialbench.py
+
+当前需要关注的文件：
+
+文件夹：spatialbench
+文件：eval_spatialbench.py
+服务器目标路径：/data/coding/SoFar/spatialbench/eval_spatialbench.py
+
+文件夹：open6dor
+文件：open6dor_perception.py
+服务器目标路径：/data/coding/SoFar/open6dor/open6dor_perception.py
+
+文件夹：open6dor
+文件：eval_open6dor.py
+服务器目标路径：/data/coding/SoFar/open6dor/eval_open6dor.py
+
+文件夹：serve
+文件：batch_logging.py
+服务器目标路径：/data/coding/SoFar/serve/batch_logging.py
+
+Stage 1 完成条件：
+- spatialbench/eval_spatialbench.py 跑完
+- open6dor/open6dor_perception.py 跑完
+- open6dor/eval_open6dor.py 跑完
+- scripts/stage1_collect_baseline.py 跑完
+- 生成 output/baseline_results.json、output/hard_cases.json、output/baseline_errors.csv
+- 再做一次 hard cases 错误案例分析
