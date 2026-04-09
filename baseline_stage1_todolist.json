@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-08T14:38:00",
+  "updated_at": "2026-04-08T15:30:00",
   "tasks": [
     {
       "id": "local_runtime_paths",
@@ -48,7 +48,7 @@
       "owner": "server",
       "status": "in_progress",
       "title": "执行 open6dor/open6dor_perception.py + eval_open6dor.py",
-      "notes": "SpatialBench 已跑完，当前进入 Open6DOR batch。open6dor_perception.py 已修复任务目录发现逻辑，改为递归查找 task_config_new5.json，并新增 --limit 参数用于小批量验证速度与正确性。2026-04-08 的 --limit 100 首批任务已开始成功写出 result.json，但同时暴露 Open6DOR reasoning 输出不稳定：部分样本返回长段自然语言并在最终 JSON 前截断，触发 No valid Open6DOR reasoning JSON found。当前本地补丁已增强 serve/qwen_inference.py 的坐标回收兜底，并将 SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS 默认值提高到 512；同时修正 progress 语义，只把 success/skipped 视为真正完成，避免失败任务在恢复运行时被永久跳过。后续先同步这两个补丁，再继续 python open6dor/open6dor_perception.py --limit 100。"
+      "notes": "SpatialBench 已跑完，当前进入 Open6DOR batch。open6dor_perception.py 已修复任务目录发现逻辑，改为递归查找 task_config_new5.json，并新增 --limit 参数用于小批量验证速度与正确性。2026-04-08 最新同步结果显示：python open6dor/open6dor_perception.py --limit 100 已完整跑完，本轮在已有 3 个已完成任务的基础上新增 100 个任务，当前累计进度为 103/4389，其中 success_count=101、error_count=2、remaining_count=4286；若只看本轮新增，可视为 98 success + 2 error。当前样本全部来自 task_refine_6dof/behind 子集，平均成功耗时约 52.59s。两类已观测 runtime errors 为 probability tensor contains either inf/nan or element < 0，以及 No valid Open6DOR reasoning JSON found in model output。当前结论是前 100 个案例的感知与落盘链路已基本打通，但 Open6DOR 尚未全量完成，也还不能用 eval_open6dor.py 与论文做有效对照。"
     },
     {
       "id": "server_spatialbench_batch",
@@ -62,7 +62,7 @@
       "owner": "server",
       "status": "todo",
       "title": "执行 scripts/stage1_collect_baseline.py 生成 baseline_results/hard_cases",
-      "notes": "脚本现已真实存在于 sofar/scripts/stage1_collect_baseline.py。当前可在 Open6DOR 仍在运行期间先执行一轮，用于汇总 SpatialBench 全量结果与当前 Open6DOR progress，生成 baseline_results.json、hard_cases.json、baseline_errors.csv、error_case_summary.json；其中 hard_cases.json 会区分 runtime_error 与 incorrect_answer，baseline_errors.csv 仅保留真正的运行时报错，error_case_summary.json 用于按报错内容聚合计数与示例 case。待 Open6DOR 全量完成后再重跑一次，固化最终版本。"
+      "notes": "脚本现已真实存在于 sofar/scripts/stage1_collect_baseline.py。当前可在 Open6DOR 仍在运行期间先执行一轮，用于汇总 SpatialBench 全量结果与当前 Open6DOR progress，生成 baseline_results.json、hard_cases.json、baseline_errors.csv、error_case_summary.json、spatialbench_incorrect_cases.json、spatialbench_incorrect_cases.csv；其中 hard_cases.json 会区分 runtime_error 与 incorrect_answer，baseline_errors.csv 仅保留真正的运行时报错，error_case_summary.json 用于按报错内容聚合计数与示例 case，spatialbench_incorrect_cases.* 用于列出每条错误答案的题目、模型输出与正确答案。当前已确认 SpatialBench incorrect answers 全量为 148 条，先前 98 条是被 hard_case_limit=100 截断后的误读。待 Open6DOR 全量完成后再重跑一次，固化最终版本。"
     },
     {
       "id": "server_manual_error_analysis_100",

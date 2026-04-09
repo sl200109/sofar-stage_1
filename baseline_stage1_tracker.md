@@ -7,15 +7,17 @@
 
 ## 当前状态
 - 状态：进行中
-- 更新时间：2026-04-07
-- 本地策略：只改代码与文档，不安装依赖，不做真实模型运行。
-- 服务器策略：上传本地修改到 `/data/coding/SoFar` 后执行 smoke test 和后续评测。
-- 当前执行顺序：
-  - `spatialbench/eval_spatialbench.py` 已跑完
-  - 当前继续跑 `open6dor/open6dor_perception.py`
-  - 再跑 `open6dor/eval_open6dor.py`
-  - 最后跑 `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
-- 当前默认后端：默认走本地 Qwen，后续服务器命令不再需要执行 `unset SOFAR_LLM_BACKEND`
+- 更新时间：2026-04-08
+- SpatialBench：已全量完成，`223/223`，`Total = 32.74`，runtime errors `2`
+- Open6DOR：已完成前 `100` 个新增案例验证；当前累计 `103/4389`，其中 `101 success + 2 error`
+- 当前已知 Open6DOR 错误类型：
+  - `probability tensor contains either inf, nan or element < 0`
+  - `No valid Open6DOR reasoning JSON found in model output`
+- 下一步：
+  - 继续 `python open6dor/open6dor_perception.py --limit 100`
+  - 跑完足够批量后再执行 `python open6dor/eval_open6dor.py`
+  - 最后执行 `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
+- 当前默认后端：默认走本地 Qwen，服务器命令不再需要 `unset SOFAR_LLM_BACKEND`
 
 ## 已完成
 - 已确认参考仓库为 `qizekun/SoFar`。
@@ -37,8 +39,11 @@
   - `output/hard_cases.json`
   - `output/baseline_errors.csv`（环境支持时额外导出 `.xlsx`）
   - `output/error_case_summary.json`
+  - `output/spatialbench_incorrect_cases.json`
+  - `output/spatialbench_incorrect_cases.csv`
   - 当前实现支持在 Open6DOR 尚未全量完成时先汇总 SpatialBench 结果与 Open6DOR progress，并在结果中明确标注 partial 状态。
   - 当前 `hard_cases.json` 会区分 `runtime_error` 与 `incorrect_answer`；`baseline_errors.csv` 仅保留真正的运行时报错；`error_case_summary.json` 进一步按报错内容分组统计计数与示例 case。
+  - 当前 `spatialbench_incorrect_cases.*` 会从历史 `eval_spatialbench_*.log` 中重建模型选择的 `A/B/C/D`，输出每条错误答案样本的题目、选项、模型输出与标准答案；最新统计显示 SpatialBench 全量共有 `148` 条 incorrect answers，而非此前受 `hard_case_limit=100` 截断误导得到的 `98`。
 - 已新增动态任务清单：
   - `baseline_stage1_todolist.json`
   - `scripts/stage1_todo.py`
@@ -153,6 +158,19 @@
   - 本地已补两项稳态修复：
     - `serve/qwen_inference.py`：增强 Open6DOR reasoning 解析器，除标准 JSON 外，还可从自然语言中的 `target/final position [x, y, z]` 片段回收坐标；同时将默认 `SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS` 从 `256` 提高到 `512`。
     - `open6dor/open6dor_perception.py`：修正 progress 语义，恢复运行时只把 `success/skipped` 视为真正完成；此前失败任务在补丁后可重新参与后续批次，而不会被旧 progress 永久跳过。
+- 已根据 2026-04-08 最新同步到本地的 `output/open6dor_perception_progress.json` 与 `output/open6dor_perception_20260408_135319.log` 确认 `python open6dor/open6dor_perception.py --limit 100` 当前结果：
+  - 本轮运行开始前已有 `3` 个已完成任务；本轮 `100/100` 已跑完，因此当前累计进度为 `103/4389`。
+  - 当前累计结果为：`success_count = 101`、`error_count = 2`、`remaining_count = 4286`。
+  - 若只看本轮新增 `100` 个任务，可等价理解为：`98 success + 2 error`。
+  - 当前这批样本全部位于 `task_refine_6dof/behind` 子集，说明这仍是局部小批量验证，尚未覆盖 Open6DOR 全量任务分布。
+  - 成功样本耗时统计：`avg_success_sec ≈ 52.59`、`median_success_sec ≈ 52.12`、`min_success_sec = 40.48`、`max_success_sec = 69.15`。
+  - 当前两条 Open6DOR runtime errors 为：
+    - `probability tensor contains either inf, nan or element < 0`
+    - `No valid Open6DOR reasoning JSON found in model output`
+  - 上述错误已同步进入：
+    - `output/baseline_errors.csv`
+    - `output/error_case_summary.json`
+  - 结论：Open6DOR 感知与结果落盘链路已在前 100 个案例上基本打通，但推理稳定性仍需继续观察；当前阶段尚不能运行 `eval_open6dor.py` 并拿结果与论文对照。
 - 已完成上述新增补丁的静态语法检查：
   - `serve/runtime_paths.py`
   - `depth/metric3dv2.py`
