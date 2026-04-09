@@ -90,3 +90,57 @@ orientation
    目标物体位置对不对
    目标物体朝向对不对
    最后能不能完成物体重排/操作任务
+
+---
+
+## 当前代码中的新 pipeline
+
+上面写的是更接近原始 SoFar baseline 的流程；当前仓库里的 `Open6DOR` 主链已经做了一些轻量优化，但核心组件没有变，主要变化如下。
+
+### 1. 先裁剪最小对象集合，再进入感知
+当前代码不会一开始就让大模型提取一长串相关对象，而是会先根据任务指令和 `task_info` 抽出最小必要对象集合，通常只保留：
+- picked object
+- 1 到 2 个 related objects
+
+这样做的目的是减少 detection、SAM、scene graph 的负担。
+
+### 2. 优先走一次 joint Qwen
+原始流程更像是两次 VLM：
+- 第一次抽取 picked object、related objects、direction attributes、target orientation
+- 第二次根据 scene graph 做最终 target position reasoning
+
+当前代码优先尝试一次 joint Qwen，尽量直接输出：
+- picked_object
+- related_objects
+- direction_attributes
+- target_orientation
+- target_position
+
+如果 joint 路径失败，再自动回退到旧的双阶段路径。
+
+### 3. orientation 变成半模板化
+当前增加了 orientation template 先验，不再完全依赖 Qwen 临场生成方向属性。  
+例如常见物体会优先补充：
+- mug -> handle / opening / bottom
+- USB -> plug end / silver plug end / larger end
+- apple -> top / bottom
+
+所以现在更像是“模板先验 + PointSO + joint/fallback 推理”的混合方式。
+
+### 4. 最终推理使用 lightweight scene graph
+当前仍然保留 scene graph 这一步，但给最终推理喂入的是 lightweight scene graph，而不是一整套冗长的重文本图结构。  
+它主要只保留最关键的：
+- picked object 的 center / bbox / init_orientation
+- related objects 的 center / bbox
+
+这样做是为了缩短 prompt、提高推理稳定性，并降低实验迭代成本。
+
+### 5. 新增了单案例 perception cache
+当前代码为单个 Open6DOR case 增加了中间缓存，例如：
+- `perception_cache.json`
+- `mask_cache.npz`
+
+这样后续如果只改 parser、reasoning、confidence 之类的上层逻辑，就可以优先复用 detection / SAM / scene graph 结果，不必每次从感知层全部重跑。
+
+### 一句话总结
+原始 SoFar 更像“重 scene graph + 双阶段 VLM 推理”，当前代码版更像“最小对象集合 + lightweight scene graph + 单次 joint Qwen + fallback”的轻量优化版。
