@@ -7,17 +7,25 @@
 
 ## 当前状态
 - 状态：进行中
-- 更新时间：2026-04-08
-- SpatialBench：已全量完成，`223/223`，`Total = 32.74`，runtime errors `2`
-- Open6DOR：已完成前 `100` 个新增案例验证；当前累计 `103/4389`，其中 `101 success + 2 error`
-- 当前已知 Open6DOR 错误类型：
-  - `probability tensor contains either inf, nan or element < 0`
-  - `No valid Open6DOR reasoning JSON found in model output`
+- 更新时间：2026-04-09
+- Stage 1 口径：`baseline feasibility / pilot`，不再以 baseline 全量 `Open6DOR 4389` 作为日常实验入口。
+- SpatialBench：已全量完成，`223/223`，`Total = 32.74`，runtime errors `2`。
+- Open6DOR：当前保留全量 progress 快照 `103/4389`，但后续日常实验默认改为固定 `open6dor10` pilot。
+- 当前日常验证流程：
+  - `python spatialbench/eval_spatialbench.py --reset-progress --speed-profile conservative`
+  - `python open6dor/open6dor_perception.py --pilot open6dor10 --reset-progress --speed-profile conservative`
+  - `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
+- 本轮已完成的 Open6DOR 轻量提速改动：
+  - joint Qwen 入口已接入：默认优先走“最小对象集合 + lightweight scene graph + 单次 Qwen”。
+  - 单案例 perception cache 已接入：检测 / SAM / scene graph 可写入并复用 `perception_cache.json` 与 `mask_cache.npz`。
+  - orientation 半模板化已接入：新增 `open6dor/orientation_templates.json`，优先给 joint prompt 提供常见方向属性先验。
+  - 最小对象集合裁剪已接入：默认仅保留 picked object 与 1~2 个 related objects；复杂场景自动回退旧双阶段路径。
+  - 旧双阶段 Open6DOR 路径保留为 fallback，避免整批失稳。
 - 下一步：
-  - 继续 `python open6dor/open6dor_perception.py --limit 100`
-  - 跑完足够批量后再执行 `python open6dor/eval_open6dor.py`
-  - 最后执行 `python scripts/stage1_collect_baseline.py --hard-case-limit 100`
-- 当前默认后端：默认走本地 Qwen，服务器命令不再需要 `unset SOFAR_LLM_BACKEND`
+  - 先在服务器跑 `SpatialBench --reset-progress --speed-profile conservative`。
+  - 再跑 `open6dor10` pilot，对比 `success_count / error_count / avg_elapsed_sec`。
+  - 跑完后重新汇总 `baseline_results.json`，并观察 joint/cached 路径是否显著降时。
+- 当前默认后端：默认走本地 Qwen，服务器命令中不再需要 `unset SOFAR_LLM_BACKEND`。
 
 ## 已完成
 - 已确认参考仓库为 `qizekun/SoFar`。
@@ -41,6 +49,16 @@
   - `output/error_case_summary.json`
   - `output/spatialbench_incorrect_cases.json`
   - `output/spatialbench_incorrect_cases.csv`
+- 已将 Stage 1 的日常验证口径收束为：
+  - `SpatialBench` 全量 223 题作为主回归集
+  - `Open6DOR` 固定 `open6dor10` pilot 作为跨任务快速检查
+  - baseline 全量 `Open6DOR 4389` 不再作为每轮实验的默认入口
+- 已为 `open6dor/open6dor_perception.py` 新增：
+  - `--pilot open6dor10`
+  - `--task-list <json-path>`
+  - `--speed-profile conservative`
+  - `--reset-progress`
+  - pilot 专属的 progress / summary / log 隔离命名
   - 当前实现支持在 Open6DOR 尚未全量完成时先汇总 SpatialBench 结果与 Open6DOR progress，并在结果中明确标注 partial 状态。
   - 当前 `hard_cases.json` 会区分 `runtime_error` 与 `incorrect_answer`；`baseline_errors.csv` 仅保留真正的运行时报错；`error_case_summary.json` 进一步按报错内容分组统计计数与示例 case。
   - 当前 `spatialbench_incorrect_cases.*` 会从历史 `eval_spatialbench_*.log` 中重建模型选择的 `A/B/C/D`，输出每条错误答案样本的题目、选项、模型输出与标准答案；最新统计显示 SpatialBench 全量共有 `148` 条 incorrect answers，而非此前受 `hard_case_limit=100` 截断误导得到的 `98`。

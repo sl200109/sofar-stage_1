@@ -1,6 +1,6 @@
+import os
 import yaml
 import torch
-import random
 import numpy as np
 from easydict import EasyDict
 from orientation.datasets.utils import pc_norm
@@ -24,16 +24,24 @@ def get_model():
     return model
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return int(raw)
+
+
 def pred_orientation(model, pcd, instruction):
     assert pcd.shape[1] == 6
     pcd_list = []
-    vote_num = 12
+    vote_num = _env_int("SOFAR_POINTSO_VOTE_NUM", 12)
+    sample_points = _env_int("SOFAR_POINTSO_SAMPLE_POINTS", 10000)
+    if pcd.shape[0] == 0:
+        raise ValueError("PointSO received an empty point cloud.")
     for i in range(vote_num):
-        if pcd.shape[0] < 10000:
-            idx = random.choices(range(pcd.shape[0]), k=10000)
-        else:
-            idx = random.sample(range(pcd.shape[0]), k=10000)
-        temp = pcd[idx]
+        replace = pcd.shape[0] < sample_points
+        idx = np.random.choice(pcd.shape[0], size=sample_points, replace=replace)
+        temp = pcd[idx].copy()
         temp[:, :3] = pc_norm(temp[:, :3])
         pcd_list.append(temp)
     pcd = np.array(pcd_list)

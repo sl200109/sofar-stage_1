@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import statistics
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -283,16 +284,33 @@ def collect_spatialbench():
     }
 
 
-def collect_open6dor():
-    progress_path = OUTPUT_DIR / "open6dor_perception_progress.json"
-    eval_pos_path = OUTPUT_DIR / "eval_pos.json"
-    eval_rot_path = OUTPUT_DIR / "eval_rot.json"
-    eval_6dof_path = OUTPUT_DIR / "eval_6dof.json"
+def summarize_open6dor_elapsed(records):
+    success_values = [
+        record.get("elapsed_sec")
+        for record in records
+        if record.get("status") == "success" and record.get("elapsed_sec") is not None
+    ]
+    if not success_values:
+        return {
+            "avg_elapsed_sec": None,
+            "median_elapsed_sec": None,
+            "min_elapsed_sec": None,
+            "max_elapsed_sec": None,
+        }
+    return {
+        "avg_elapsed_sec": round(sum(success_values) / len(success_values), 2),
+        "median_elapsed_sec": round(statistics.median(success_values), 2),
+        "min_elapsed_sec": round(min(success_values), 2),
+        "max_elapsed_sec": round(max(success_values), 2),
+    }
 
+
+def collect_open6dor_run(source_name, progress_name, include_eval=False):
+    progress_path = OUTPUT_DIR / progress_name
     progress = load_json(progress_path) or {}
-    eval_pos = load_json(eval_pos_path) or {}
-    eval_rot = load_json(eval_rot_path) or {}
-    eval_6dof = load_json(eval_6dof_path) or {}
+    eval_pos = load_json(OUTPUT_DIR / "eval_pos.json") or {}
+    eval_rot = load_json(OUTPUT_DIR / "eval_rot.json") or {}
+    eval_6dof = load_json(OUTPUT_DIR / "eval_6dof.json") or {}
 
     records = progress.get("records", [])
     hard_cases = []
@@ -304,7 +322,7 @@ def collect_open6dor():
         task_dir = record.get("task_dir", "")
         hard_cases.append(
             {
-                "source": "open6dor",
+                "source": source_name,
                 "case_id": task_dir,
                 "track": infer_open6dor_track(task_dir),
                 "question_type": "",
@@ -317,7 +335,7 @@ def collect_open6dor():
         )
         error_rows.append(
             {
-                "source": "open6dor",
+                "source": source_name,
                 "case_id": task_dir,
                 "track": infer_open6dor_track(task_dir),
                 "question_type": "",
@@ -325,33 +343,55 @@ def collect_open6dor():
                 "failure_type": "runtime_error",
                 "error_group": normalize_error_message(record.get("error")),
                 "error": record.get("error"),
-                "details": f"elapsed_sec={record.get('elapsed_sec', '')}",
+                "details": f"elapsed_sec={record.get('elapsed_sec', '')}; failed_stage={record.get('failed_stage', '')}",
             }
         )
 
+    elapsed_summary = summarize_open6dor_elapsed(records)
     summary = {
         "progress_available": progress_path.exists(),
         "progress_path": str(progress_path),
+        "run_mode": progress.get("run_mode"),
+        "pilot": progress.get("pilot"),
+        "task_list": progress.get("task_list"),
+        "speed_profile": progress.get("speed_profile"),
         "total_tasks": progress.get("total_tasks"),
         "success_count": progress.get("success_count"),
         "error_count": progress.get("error_count"),
         "skipped_count": progress.get("skipped_count"),
         "processed_count": progress.get("processed_count"),
         "remaining_count": progress.get("remaining_count"),
-        "eval_pos_available": bool(eval_pos),
-        "eval_rot_available": bool(eval_rot),
-        "eval_6dof_available": bool(eval_6dof),
-        "eval_pos": eval_pos if eval_pos else None,
-        "eval_rot": eval_rot if eval_rot else None,
-        "eval_6dof": eval_6dof if eval_6dof else None,
+        "avg_elapsed_sec": progress.get("avg_success_sec", elapsed_summary["avg_elapsed_sec"]),
+        "median_elapsed_sec": progress.get("median_success_sec", elapsed_summary["median_elapsed_sec"]),
+        "min_elapsed_sec": progress.get("min_success_sec", elapsed_summary["min_elapsed_sec"]),
+        "max_elapsed_sec": progress.get("max_success_sec", elapsed_summary["max_elapsed_sec"]),
+        "stage_timing_summary": progress.get("stage_timing_summary"),
         "is_partial": bool(progress) and progress.get("remaining_count", 0) not in (None, 0),
     }
+    if include_eval:
+        summary.update(
+            {
+                "eval_pos_available": bool(eval_pos),
+                "eval_rot_available": bool(eval_rot),
+                "eval_6dof_available": bool(eval_6dof),
+                "eval_pos": eval_pos if eval_pos else None,
+                "eval_rot": eval_rot if eval_rot else None,
+                "eval_6dof": eval_6dof if eval_6dof else None,
+            }
+        )
 
     return {
-        "available": bool(progress) or bool(eval_pos) or bool(eval_rot) or bool(eval_6dof),
+        "available": bool(progress) or (include_eval and (bool(eval_pos) or bool(eval_rot) or bool(eval_6dof))),
         "summary": summary,
         "hard_cases": hard_cases,
         "error_rows": error_rows,
+    }
+
+
+def collect_open6dor():
+    return {
+        "full": collect_open6dor_run("open6dor_full", "open6dor_perception_progress.json", include_eval=True),
+        "pilot_10": collect_open6dor_run("open6dor_pilot_10", "open6dor_perception_progress_open6dor10.json"),
     }
 
 
@@ -369,7 +409,8 @@ def infer_open6dor_track(task_dir):
 def collect_hard_cases(spatialbench, open6dor, limit):
     ranked = []
     ranked.extend(spatialbench["hard_cases"])
-    ranked.extend(open6dor["hard_cases"])
+    ranked.extend(open6dor["full"]["hard_cases"])
+    ranked.extend(open6dor["pilot_10"]["hard_cases"])
 
     def sort_key(item):
         source_rank = 0 if item["source"] == "spatialbench" else 1
@@ -383,7 +424,8 @@ def collect_hard_cases(spatialbench, open6dor, limit):
 def collect_all_hard_cases(spatialbench, open6dor):
     ranked = []
     ranked.extend(spatialbench["hard_cases"])
-    ranked.extend(open6dor["hard_cases"])
+    ranked.extend(open6dor["full"]["hard_cases"])
+    ranked.extend(open6dor["pilot_10"]["hard_cases"])
 
     def sort_key(item):
         source_rank = 0 if item["source"] == "spatialbench" else 1
@@ -399,24 +441,30 @@ def build_baseline_results(spatialbench, open6dor):
         "root_dir": str(ROOT_DIR),
         "output_dir": str(OUTPUT_DIR),
         "spatialbench": spatialbench["summary"],
-        "open6dor": open6dor["summary"],
+        "open6dor_full_progress": open6dor["full"]["summary"],
+        "open6dor_pilot_10": open6dor["pilot_10"]["summary"],
         "notes": {
             "spatialbench_complete": bool(
                 spatialbench["summary"]
                 and spatialbench["summary"].get("processed_samples") == 223
                 and spatialbench["summary"].get("remaining_samples") == 0
             ),
-            "open6dor_complete": bool(
-                open6dor["summary"]
-                and open6dor["summary"].get("remaining_count") == 0
-                and open6dor["summary"].get("processed_count") not in (None, 0)
+            "open6dor_full_complete": bool(
+                open6dor["full"]["summary"]
+                and open6dor["full"]["summary"].get("remaining_count") == 0
+                and open6dor["full"]["summary"].get("processed_count") not in (None, 0)
             ),
             "open6dor_eval_ready": bool(
-                open6dor["summary"]
-                and open6dor["summary"].get("eval_pos_available")
-                and open6dor["summary"].get("eval_rot_available")
-                and open6dor["summary"].get("eval_6dof_available")
+                open6dor["full"]["summary"]
+                and open6dor["full"]["summary"].get("eval_pos_available")
+                and open6dor["full"]["summary"].get("eval_rot_available")
+                and open6dor["full"]["summary"].get("eval_6dof_available")
             ),
+            "open6dor_pilot_ready": bool(
+                open6dor["pilot_10"]["summary"]
+                and open6dor["pilot_10"]["summary"].get("processed_count") not in (None, 0)
+            ),
+            "stage1_mode": "baseline feasibility / pilot",
         },
     }
 
@@ -495,7 +543,11 @@ def main():
     baseline_results = build_baseline_results(spatialbench, open6dor)
     all_hard_cases = collect_all_hard_cases(spatialbench, open6dor)
     hard_cases = all_hard_cases[:args.hard_case_limit]
-    error_rows = spatialbench["error_rows"] + open6dor["error_rows"]
+    error_rows = (
+        spatialbench["error_rows"]
+        + open6dor["full"]["error_rows"]
+        + open6dor["pilot_10"]["error_rows"]
+    )
     error_case_summary = build_error_case_summary(all_hard_cases, error_rows)
     spatialbench_incorrect = reconstruct_spatialbench_predictions()
 
@@ -559,7 +611,8 @@ def main():
     print(
         "[stage1] summary: "
         f"spatialbench_available={spatialbench['available']}, "
-        f"open6dor_available={open6dor['available']}, "
+        f"open6dor_full_available={open6dor['full']['available']}, "
+        f"open6dor_pilot_10_available={open6dor['pilot_10']['available']}, "
         f"hard_cases={len(hard_cases)}, "
         f"errors={len(error_rows)}, "
         f"spatialbench_incorrect_cases={len(spatialbench_incorrect['incorrect_cases'])}"

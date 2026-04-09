@@ -23,6 +23,13 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def fixed_get_imports(filename: Union[str, os.PathLike]) -> list[str]:
     """Work around for https://huggingface.co/microsoft/phi-1_5/discussions/72."""
     if not str(filename).endswith("/modeling_florence2.py"):
@@ -68,9 +75,11 @@ def run_florence_inference(
     return generated_text, response
 
 
-def get_detections(image, obj_list, florence_model, output_folder="output", single=False):
+def get_detections(image, obj_list, florence_model, output_folder="output", single=False, save_artifacts=None):
 
     model, processor = florence_model
+    if save_artifacts is None:
+        save_artifacts = _env_flag("SOFAR_SAVE_DEBUG_ARTIFACTS", True)
 
     detections_list = []
     for i in range(len(obj_list)):
@@ -102,8 +111,9 @@ def get_detections(image, obj_list, florence_model, output_folder="output", sing
     annotated_frame = box_annotator.annotate(scene=image.copy(), detections=detections)
 
     # save the annotated florence image
-    annotated_frame = Image.fromarray(annotated_frame)
-    annotated_frame.save(os.path.join(output_folder, "florence_image.jpg"))
+    if save_artifacts:
+        annotated_frame = Image.fromarray(annotated_frame)
+        annotated_frame.save(os.path.join(output_folder, "florence_image.jpg"))
 
     if single:
         # Filter detections to only include highest confidence detections per object

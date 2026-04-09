@@ -4,9 +4,81 @@ from serve import pointso
 from serve.utils import remove_outliers
 
 
-def open6dor_scene_graph(image, pcd, mask, info, object_names, orientation_model, output_folder="output"):
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _should_save_debug_artifacts(save_debug_artifacts):
+    if save_debug_artifacts is None:
+        return _env_flag("SOFAR_SAVE_DEBUG_ARTIFACTS", True)
+    return save_debug_artifacts
+
+
+def _save_npy_if_needed(path, array, save_debug_artifacts):
+    if save_debug_artifacts:
+        np.save(path, array)
+
+
+def _filter_colored_point_cloud(colored_object_pcd):
+    if colored_object_pcd.size == 0:
+        return colored_object_pcd
+    filtered = remove_outliers(colored_object_pcd)
+    if filtered.size == 0:
+        return colored_object_pcd
+    return filtered
+
+
+def _filter_xyz_points(segmented_object):
+    if segmented_object.size == 0:
+        return segmented_object
+    filtered = remove_outliers(segmented_object)
+    if filtered.size == 0:
+        return segmented_object
+    return filtered
+
+
+def build_open6dor_lightweight_scene_graph(
+    picked_object_info,
+    other_objects_info,
+    picked_object_dict,
+    target_orientation=None,
+):
+    target_orientation = target_orientation or {}
+    return {
+        "picked_object": {
+            "object_name": picked_object_info.get("object name"),
+            "center": picked_object_info.get("center"),
+            "bounding_box": picked_object_info.get("bounding box"),
+            "init_orientation": picked_object_dict.get("orientation", {}),
+            "target_orientation_hint": target_orientation,
+        },
+        "related_objects": [
+            {
+                "object_name": item.get("object name"),
+                "center": item.get("center"),
+                "bounding_box": item.get("bounding box"),
+            }
+            for item in other_objects_info
+        ],
+    }
+
+
+def open6dor_scene_graph(
+    image,
+    pcd,
+    mask,
+    info,
+    object_names,
+    orientation_model,
+    output_folder="output",
+    save_debug_artifacts=None,
+):
     n, h, w = mask.shape
     image = np.array(image)
+    save_debug_artifacts = _should_save_debug_artifacts(save_debug_artifacts)
 
     picked_object_name = info["picked_object"]
     index = object_names.index(picked_object_name)
@@ -15,11 +87,11 @@ def open6dor_scene_graph(image, pcd, mask, info, object_names, orientation_model
     segmented_object = pcd[object_mask]
     segmented_image = image[object_mask]
     colored_object_pcd = np.concatenate((segmented_object.reshape(-1, 3), segmented_image.reshape(-1, 3)), axis=-1)
-    np.save(os.path.join(output_folder, "picked_obj_mask.npy"), object_mask)
-    np.save(os.path.join(output_folder, "picked_obj.npy"), colored_object_pcd)
+    _save_npy_if_needed(os.path.join(output_folder, "picked_obj_mask.npy"), object_mask, save_debug_artifacts)
+    _save_npy_if_needed(os.path.join(output_folder, "picked_obj.npy"), colored_object_pcd, save_debug_artifacts)
 
-    segmented_object = remove_outliers(segmented_object)
-    colored_object_pcd = remove_outliers(colored_object_pcd)
+    colored_object_pcd = _filter_colored_point_cloud(colored_object_pcd)
+    segmented_object = colored_object_pcd[:, :3]
     min_values = segmented_object.min(axis=0)
     max_values = segmented_object.max(axis=0)
     mean_values = segmented_object.mean(axis=0)
@@ -68,9 +140,13 @@ def open6dor_scene_graph(image, pcd, mask, info, object_names, orientation_model
         segmented_object = pcd[object_mask]
         segmented_image = image[object_mask]
         colored_object_pcd = np.concatenate((segmented_object.reshape(-1, 3), segmented_image.reshape(-1, 3)), axis=-1)
-        np.save(os.path.join(output_folder, f"else_obj_{obj_id}.npy"), colored_object_pcd)
+        _save_npy_if_needed(
+            os.path.join(output_folder, f"else_obj_{obj_id}.npy"),
+            colored_object_pcd,
+            save_debug_artifacts,
+        )
 
-        segmented_object = remove_outliers(segmented_object)
+        segmented_object = _filter_xyz_points(segmented_object)
         min_values = segmented_object.min(axis=0)
         max_values = segmented_object.max(axis=0)
         mean_values = segmented_object.mean(axis=0)
@@ -212,11 +288,21 @@ def open6dor_scene_graph_for_mismatch_pcd(image, pcd, mask, info, object_names, 
     return picked_object_info, other_objects_info, picked_object_dict, np.array(mask_index)
 
 
-def get_scene_graph(image, pcd, mask, info, object_names, orientation_model, output_folder="output"):
+def get_scene_graph(
+    image,
+    pcd,
+    mask,
+    info,
+    object_names,
+    orientation_model,
+    output_folder="output",
+    save_debug_artifacts=None,
+):
     if len(mask) == 0:
         return [], []
     n, h, w = mask.shape
     image = np.array(image)
+    save_debug_artifacts = _should_save_debug_artifacts(save_debug_artifacts)
 
     objects_info = []
     objects_dict = []
@@ -225,10 +311,14 @@ def get_scene_graph(image, pcd, mask, info, object_names, orientation_model, out
         segmented_object = pcd[object_mask]
         segmented_image = image[object_mask]
         colored_object_pcd = np.concatenate((segmented_object.reshape(-1, 3), segmented_image.reshape(-1, 3)), axis=-1)
-        np.save(os.path.join(output_folder, f"obj_{i + 1}.npy"), colored_object_pcd)
+        _save_npy_if_needed(
+            os.path.join(output_folder, f"obj_{i + 1}.npy"),
+            colored_object_pcd,
+            save_debug_artifacts,
+        )
 
-        segmented_object = remove_outliers(segmented_object)
-        colored_object_pcd = remove_outliers(colored_object_pcd)
+        colored_object_pcd = _filter_colored_point_cloud(colored_object_pcd)
+        segmented_object = colored_object_pcd[:, :3]
         min_values = segmented_object.min(axis=0)
         max_values = segmented_object.max(axis=0)
         mean_values = segmented_object.mean(axis=0)
@@ -271,11 +361,12 @@ def get_scene_graph(image, pcd, mask, info, object_names, orientation_model, out
     return objects_info, objects_dict
 
 
-def get_scene_graph_3d(image, pcd, mask, info, object_names, output_folder="output"):
+def get_scene_graph_3d(image, pcd, mask, info, object_names, output_folder="output", save_debug_artifacts=None):
     if len(mask) == 0:
         return [], []
     n, h, w = mask.shape
     image = np.array(image)
+    save_debug_artifacts = _should_save_debug_artifacts(save_debug_artifacts)
 
     objects_info = []
     objects_dict = []
@@ -284,9 +375,13 @@ def get_scene_graph_3d(image, pcd, mask, info, object_names, output_folder="outp
         segmented_object = pcd[object_mask]
         segmented_image = image[object_mask]
         colored_object_pcd = np.concatenate((segmented_object.reshape(-1, 3), segmented_image.reshape(-1, 3)), axis=-1)
-        np.save(os.path.join(output_folder, f"obj_{i + 1}.npy"), colored_object_pcd)
+        _save_npy_if_needed(
+            os.path.join(output_folder, f"obj_{i + 1}.npy"),
+            colored_object_pcd,
+            save_debug_artifacts,
+        )
 
-        segmented_object = remove_outliers(segmented_object)
+        segmented_object = _filter_xyz_points(segmented_object)
         min_values = segmented_object.min(axis=0)
         max_values = segmented_object.max(axis=0)
         mean_values = segmented_object.mean(axis=0)

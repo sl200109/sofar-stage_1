@@ -1,0 +1,57 @@
+{
+  "mug": {
+    "aliases": ["cup"],
+    "direction_attributes": ["handle", "opening", "bottom"],
+    "description": "A mug-like object is usually described by its handle, opening, and bottom."
+  },
+  "usb": {
+    "aliases": ["flash drive", "u disk"],
+    "direction_attributes": ["plug end", "silver plug end", "larger end"],
+    "description": "USB placement often distinguishes the plug end and the larger body end."
+  },
+  "apple": {
+    "aliases": ["orange", "fruit"],
+    "direction_attributes": ["top", "bottom"],
+    "description": "Fruit upright placement is usually described by its top and bottom."
+  },
+  "bottle": {
+    "aliases": ["water bottle", "canister"],
+    "direction_attributes": ["top", "bottom", "cap"],
+    "description": "Bottle-like objects are often described by cap, top, and bottom."
+  },
+  "binder": {
+    "aliases": ["folder"],
+    "direction_attributes": ["larger face", "spine", "front cover"],
+    "description": "Flat office objects are commonly described by the larger face or spine."
+  },
+  "binder clips": {
+    "aliases": ["binder clip", "clips"],
+    "direction_attributes": ["clip side", "handle"],
+    "description": "Binder clips are usually referenced by the clip side or the wire handle."
+  },
+  "book": {
+    "aliases": ["notebook"],
+    "direction_attributes": ["front cover", "spine", "larger face"],
+    "description": "Books are commonly described by cover orientation or spine direction."
+  },
+  "mobile phone": {
+    "aliases": ["phone", "cell phone", "smartphone"],
+    "direction_attributes": ["screen", "phone top", "back"],
+    "description": "Phones are usually oriented by screen, top edge, or back side."
+  },
+  "knife": {
+    "aliases": ["kitchen knife"],
+    "direction_attributes": ["blade", "handle"],
+    "description": "Knives are typically oriented by blade direction and handle."
+  },
+  "pitcher base": {
+    "aliases": ["pitcher"],
+    "direction_attributes": ["handle", "opening", "bottom"],
+    "description": "Pitcher-like objects are usually described by handle and opening."
+  },
+  "organizer": {
+    "aliases": ["box organizer", "storage box"],
+    "direction_attributes": ["opening", "front", "bottom"],
+    "description": "Organizer placement often references front/opening or bottom."
+  }
+}

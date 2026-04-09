@@ -45,7 +45,37 @@ def parse_args():
         default=None,
         help="Recover completed samples from an old eval_spatialbench log file.",
     )
+    parser.add_argument(
+        "--speed-profile",
+        choices=["off", "conservative"],
+        default="off",
+        help="Apply a named batch speed profile for recurring validation runs.",
+    )
+    parser.add_argument(
+        "--reset-progress",
+        action="store_true",
+        help="Ignore eval_spatialbench_progress.json and rerun the full dataset.",
+    )
     return parser.parse_args()
+
+
+def apply_speed_profile(profile):
+    settings = {}
+    if profile == "conservative":
+        defaults = {
+            "SOFAR_SAVE_DEBUG_ARTIFACTS": "0",
+            "SOFAR_SAM_PREFER_SINGLE_MASK": "1",
+            "SOFAR_FLORENCE_MAX_NEW_TOKENS": "256",
+            "SOFAR_FLORENCE_NUM_BEAMS": "1",
+            "SOFAR_POINTSO_VOTE_NUM": "6",
+            "SOFAR_POINTSO_SAMPLE_POINTS": "4096",
+            "SOFAR_QWEN_VQA_PARSE_MAX_NEW_TOKENS": "96",
+            "SOFAR_QWEN_VQA_EVAL_MAX_NEW_TOKENS": "4",
+        }
+        for key, value in defaults.items():
+            os.environ.setdefault(key, value)
+            settings[key] = os.environ[key]
+    return settings
 
 
 def resize_for_vlm(image, max_side):
@@ -114,7 +144,9 @@ def save_progress(result):
     tmp_path.replace(progress_path)
 
 
-def load_progress():
+def load_progress(reset_progress=False):
+    if reset_progress:
+        return None, set()
     progress_path = progress_file_path()
     if not progress_path.exists():
         return None, set()
@@ -267,7 +299,11 @@ def process_info(info):
 
 if __name__ == "__main__":
     args = parse_args()
+    speed_profile_settings = apply_speed_profile(args.speed_profile)
     run_id, _ = setup_timestamped_logging(output_folder, "eval_spatialbench")
+    if args.speed_profile != "off":
+        print(f"[spatialbench] speed_profile={args.speed_profile}")
+        print(f"[spatialbench] speed_profile_settings={speed_profile_settings}")
     llm_backend = resolve_llm_backend()
     print(f"LLM backend: {llm_backend}")
 
@@ -299,7 +335,9 @@ if __name__ == "__main__":
     info_list = json.load(open(spatialbench_dir / "spatial_data.json"))
     total = len(info_list)
     print("total: ", total)
-    result, processed_ids = load_progress()
+    result, processed_ids = load_progress(reset_progress=args.reset_progress)
+    if args.reset_progress:
+        print("[spatialbench] starting fresh because --reset-progress was provided")
     if result is None:
         if args.recover_log:
             result, processed_ids = recover_progress_from_log(args.recover_log, info_list)

@@ -3,6 +3,7 @@ import re
 import os
 from qwen_vl_utils import process_vision_info
 from serve.system_prompts import (
+    open6dor_joint_reasoning_prompt,
     open6dor_parsing_prompt,
     open6dor_reasoning_prompt,
     manip_parsing_prompt,
@@ -237,6 +238,77 @@ def _normalize_target_orientation(target_orientation):
     return {}
 
 
+def _ensure_string_list(values):
+    if not isinstance(values, list):
+        return []
+    result = []
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _normalize_numeric_triplet(value):
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        try:
+            return [float(item) for item in value]
+        except Exception:
+            return None
+    if isinstance(value, str):
+        return _parse_numeric_triplet(value)
+    return None
+
+
+def _normalize_open6dor_joint_json(raw_info):
+    if not isinstance(raw_info, dict):
+        raise ValueError(f"Unsupported Open6DOR joint schema: {raw_info}")
+    info = dict(raw_info)
+    info["picked_object"] = str(info.get("picked_object", "")).strip()
+    info["related_objects"] = _ensure_string_list(info.get("related_objects", []))
+    info["direction_attributes"] = _ensure_string_list(info.get("direction_attributes", []))
+    info["target_orientation"] = _normalize_target_orientation(info.get("target_orientation", {}))
+    if not info["direction_attributes"] and info["target_orientation"]:
+        info["direction_attributes"] = list(info["target_orientation"].keys())
+    normalized_position = _normalize_numeric_triplet(info.get("target_position"))
+    if normalized_position is None:
+        raise ValueError(f"Missing valid target_position in joint result: {raw_info}")
+    info["target_position"] = normalized_position
+    info["calculation_process"] = str(info.get("calculation_process", "")).strip()
+    return info
+
+
+def _load_open6dor_joint_json(output_text):
+    cleaned = output_text.replace("```json", "").replace("```", "").strip()
+    cleaned = _repair_invalid_backslash_escape(cleaned)
+
+    for candidate in _iter_json_block_candidates(cleaned):
+        try:
+            obj = json.loads(_repair_invalid_backslash_escape(candidate))
+        except json.JSONDecodeError:
+            continue
+        try:
+            return _normalize_open6dor_joint_json(obj)
+        except Exception:
+            continue
+
+    # Last-chance fallback: reuse the reasoning extractor if the model only emitted target_position,
+    # then wrap it into the joint schema with empty fields.
+    info = _load_open6dor_reasoning_json(cleaned)
+    return _normalize_open6dor_joint_json(
+        {
+            "picked_object": "",
+            "related_objects": [],
+            "direction_attributes": [],
+            "target_orientation": {},
+            "target_position": info.get("target_position", []),
+            "calculation_process": info.get("calculation_process", ""),
+        }
+    )
+
+
 def _extract_choice_letter(text):
     for ch in text.strip().upper():
         if ch in {"A", "B", "C", "D"}:
@@ -259,7 +331,10 @@ def open6dor_parsing(qwen_model, processor, image_path, instruction):
                     "type": "image",
                     "image": image_path,
                 },
-                {"type": "text", "text": instruction},
+                {
+                    "type": "text",
+                    "text": instruction + "\nReturn JSON only. Do not include markdown fences or natural-language explanation.",
+                },
             ],
         }
     ]
@@ -284,44 +359,145 @@ def open6dor_parsing(qwen_model, processor, image_path, instruction):
 
 
 def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, picked_object_info, other_objects_info):
-    messages = [
-        {
-            "role": "system",
-            "content": [
-                {"type": "text", "text": open6dor_reasoning_prompt},
-            ],
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": image_path,
-                },
-                {
-                    "type": "text",
-                    "text": (
-                        f"Command: {instruction}\n"
-                        f"picked_object_info: {picked_object_info}\n"
-                        f"other_objects_info: {other_objects_info}\n"
-                        'Return JSON only in the format '
-                        '{"calculation_process": "...", "target_position": [x, y, z]}.'
-                    )
-                },
-            ],
-        }
-    ]
+    def build_messages(strict_json=False):
+        json_instruction = (
+            'Return JSON only in the format '
+            '{"calculation_process": "...", "target_position": [x, y, z]}. '
+            "Do not use markdown fences."
+        )
+        if strict_json:
+            json_instruction += (
+                " Do not explain your steps outside JSON. "
+                "If uncertain, still return best-effort JSON with target_position."
+            )
+        return [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": open6dor_reasoning_prompt},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image_path,
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Command: {instruction}\n"
+                            f"picked_object_info: {picked_object_info}\n"
+                            f"other_objects_info: {other_objects_info}\n"
+                            f"{json_instruction}"
+                        )
+                    },
+                ],
+            }
+        ]
 
-    output_text = _qwen_generate_text(
-        qwen_model,
-        processor,
-        messages,
-        max_new_tokens=_env_int("SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS", 512),
-    )
-    print(output_text)
-    info = _load_open6dor_reasoning_json(output_text)
-    print(info)
-    return info
+    max_new_tokens = _env_int("SOFAR_QWEN_OPEN6DOR_REASON_MAX_NEW_TOKENS", 512)
+    last_error = None
+    for strict_json in (False, True):
+        messages = build_messages(strict_json=strict_json)
+        output_text = _qwen_generate_text(
+            qwen_model,
+            processor,
+            messages,
+            max_new_tokens=max_new_tokens,
+        )
+        print(output_text)
+        try:
+            info = _load_open6dor_reasoning_json(output_text)
+            print(info)
+            return info
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            if strict_json:
+                raise
+            print("[open6dor] reasoning JSON parse failed, retrying with stricter prompt...")
+
+    raise last_error
+
+
+def open6dor_joint_reasoning(
+    qwen_model,
+    processor,
+    image_path,
+    instruction,
+    lightweight_scene_graph,
+    object_set_hint=None,
+    orientation_template_hints=None,
+):
+    object_set_hint = object_set_hint or {}
+    orientation_template_hints = orientation_template_hints or {}
+
+    def build_messages(strict_json=False):
+        strict_clause = (
+            "Return JSON only. Do not output markdown fences or natural-language explanation outside JSON."
+        )
+        if strict_json:
+            strict_clause += (
+                " Use exactly the required keys: picked_object, related_objects, direction_attributes, "
+                "target_orientation, target_position, calculation_process."
+            )
+        return [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": open6dor_joint_reasoning_prompt},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image_path,
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Command: {instruction}\n"
+                            f"Object set hint: {json.dumps(object_set_hint, ensure_ascii=False)}\n"
+                            f"Orientation template hints: {json.dumps(orientation_template_hints, ensure_ascii=False)}\n"
+                            f"Lightweight scene graph: {json.dumps(lightweight_scene_graph, ensure_ascii=False)}\n"
+                            f"{strict_clause}"
+                        ),
+                    },
+                ],
+            },
+        ]
+
+    max_new_tokens = _env_int("SOFAR_QWEN_OPEN6DOR_JOINT_MAX_NEW_TOKENS", 256)
+    last_error = None
+    for strict_json in (False, True):
+        messages = build_messages(strict_json=strict_json)
+        output_text = _qwen_generate_text(
+            qwen_model,
+            processor,
+            messages,
+            max_new_tokens=max_new_tokens,
+        )
+        print(output_text)
+        try:
+            info = _load_open6dor_joint_json(output_text)
+            if not info["picked_object"]:
+                info["picked_object"] = str(object_set_hint.get("picked_object", "")).strip()
+            if not info["related_objects"]:
+                info["related_objects"] = _ensure_string_list(object_set_hint.get("related_objects", []))
+            if not info["direction_attributes"] and orientation_template_hints.get("direction_attributes"):
+                info["direction_attributes"] = _ensure_string_list(orientation_template_hints["direction_attributes"])
+            print(info)
+            return info
+        except Exception as exc:
+            last_error = exc
+            if strict_json:
+                raise
+            print("[open6dor] joint JSON parse failed, retrying with stricter prompt...")
+
+    raise last_error
 
 
 def manip_parsing(qwen_model, processor, image_path, instruction):
