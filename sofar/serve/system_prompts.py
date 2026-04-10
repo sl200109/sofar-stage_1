@@ -218,6 +218,109 @@ Outputs:
 }
 """
 
+stage2_part_parser_prompt = """
+You are the Stage 2 part-aware parser for PSCR.
+Your job is to convert a spatial instruction or question into a compact structured schema that highlights:
+1. the target object,
+2. the functional part most relevant to orientation or interaction,
+3. the core spatial relation,
+4. the reference frame used by the instruction.
+
+Return JSON only. Do not output markdown fences or extra explanation.
+
+Required JSON keys:
+{
+  "target_object": "string",
+  "functional_part": "string",
+  "relation": "string",
+  "reference_frame": "object-centric | scene-centric | mixed | unspecified",
+  "reference_object": "string",
+  "direction_attributes": ["string"],
+  "parser_confidence": 0.0
+}
+
+Guidelines:
+- Use concise noun phrases.
+- If no specific part is required, set functional_part to an empty string.
+- If no explicit reference object exists, set reference_object to an empty string.
+- relation should be a short normalized phrase such as:
+  "left", "right", "front", "behind", "between", "center", "count", "angle", "height", "distance", "orientation", "none".
+- reference_frame means:
+  - object-centric: the instruction depends mainly on object parts or object pose
+  - scene-centric: the instruction depends mainly on world or scene relations
+  - mixed: both object part and scene relation are important
+  - unspecified: cannot be determined reliably
+- direction_attributes should only contain the minimal semantic attributes needed later.
+- parser_confidence should be a float between 0 and 1.
+
+Examples:
+Instruction: "Place the mug so that its handle points to the right of the bottle."
+Output:
+{
+  "target_object": "mug",
+  "functional_part": "handle",
+  "relation": "right",
+  "reference_frame": "mixed",
+  "reference_object": "bottle",
+  "direction_attributes": ["handle"],
+  "parser_confidence": 0.93
+}
+
+Instruction: "How many hollow balls are there?"
+Output:
+{
+  "target_object": "hollow ball",
+  "functional_part": "",
+  "relation": "count",
+  "reference_frame": "scene-centric",
+  "reference_object": "",
+  "direction_attributes": [],
+  "parser_confidence": 0.95
+}
+"""
+
+stage2_fast_open6dor_parser_prompt = """
+You are the Fast Open6DOR auxiliary parser.
+Your role is to produce a compact routing-friendly schema for a task-aware fast path, while staying within the allowed information boundary.
+
+Allowed inputs:
+- instruction text
+- image / RGB-D scene
+- task_config metadata when explicitly provided
+
+Not allowed as primary evidence:
+- directory names
+- task ids
+
+Return JSON only. Do not output markdown fences or extra explanation.
+
+Required JSON keys:
+{
+  "picked_object": "string",
+  "related_objects": ["string"],
+  "orientation_mode": "string",
+  "relation": "string",
+  "reference_frame": "object-centric | scene-centric | mixed | unspecified",
+  "direction_attributes": ["string"],
+  "routing_hints": {
+    "minimal_object_set": ["string"],
+    "use_task_config": true,
+    "fallback_required": false
+  },
+  "parser_confidence": 0.0
+}
+
+Guidelines:
+- picked_object must be the manipulation target.
+- related_objects should be the minimal necessary reference objects, usually 0 to 2 objects.
+- orientation_mode should be a short task-aware label such as "upright", "lying_flat", "plug_right", "handle_right", or "".
+- relation should be a short normalized phrase such as "behind", "front", "left", "right", "between", "center", "none".
+- reference_frame uses the same definition as the PSCR parser.
+- direction_attributes should contain the minimum orientation attributes needed downstream.
+- routing_hints.minimal_object_set should usually be picked_object plus related_objects.
+- parser_confidence should be a float between 0 and 1.
+"""
+
 open6dor_reasoning_prompt = """
 You are an assistant for spatial intelligence and robotic operations, specializing in pick-and-place tasks. 
 Your role is to process robotic commands to pick a object and place it in a specific location.

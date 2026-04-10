@@ -8,6 +8,8 @@ from serve.system_prompts import (
     open6dor_reasoning_prompt,
     manip_parsing_prompt,
     manip_reasoning_prompt,
+    stage2_fast_open6dor_parser_prompt,
+    stage2_part_parser_prompt,
     vqa_parsing_prompt,
     vqa_reasoning_prompt,
 )
@@ -262,6 +264,177 @@ def _normalize_numeric_triplet(value):
     return None
 
 
+def _normalize_confidence(value, default=0.0):
+    try:
+        score = float(value)
+    except Exception:
+        return default
+    if score < 0:
+        return 0.0
+    if score > 1:
+        return 1.0
+    return round(score, 4)
+
+
+def _normalize_relation(value):
+    text = str(value or "").strip().lower().replace("_", " ")
+    text = re.sub(r"\s+", " ", text)
+    allowed = {
+        "left",
+        "right",
+        "front",
+        "behind",
+        "between",
+        "center",
+        "count",
+        "angle",
+        "height",
+        "distance",
+        "orientation",
+        "top",
+        "bottom",
+        "none",
+    }
+    if text in allowed:
+        return text
+    return text or "none"
+
+
+def _infer_relation_from_text(text):
+    lower = str(text or "").lower()
+    if "between" in lower:
+        return "between"
+    if "center of" in lower or "at the center" in lower:
+        return "center"
+    if "in front of" in lower:
+        return "front"
+    if "behind" in lower:
+        return "behind"
+    if "left" in lower:
+        return "left"
+    if "right" in lower:
+        return "right"
+    if "count" in lower or "how many" in lower:
+        return "count"
+    if "angle" in lower:
+        return "angle"
+    if "height" in lower:
+        return "height"
+    if "distance" in lower or "far" in lower:
+        return "distance"
+    if "orientation" in lower or "facing" in lower:
+        return "orientation"
+    return "none"
+
+
+def _normalize_reference_frame(value, relation="none", functional_part="", direction_attributes=None):
+    direction_attributes = direction_attributes or []
+    text = str(value or "").strip().lower().replace("_", "-")
+    mapping = {
+        "object-centric": "object-centric",
+        "object centric": "object-centric",
+        "scene-centric": "scene-centric",
+        "scene centric": "scene-centric",
+        "world-centric": "scene-centric",
+        "world centric": "scene-centric",
+        "mixed": "mixed",
+        "unspecified": "unspecified",
+        "none": "unspecified",
+    }
+    if text in mapping:
+        return mapping[text]
+
+    has_part = bool(str(functional_part or "").strip()) or bool(direction_attributes)
+    has_scene_relation = relation not in {"none", "orientation"}
+    if has_part and has_scene_relation:
+        return "mixed"
+    if has_part:
+        return "object-centric"
+    if has_scene_relation:
+        return "scene-centric"
+    return "unspecified"
+
+
+def _normalize_stage2_part_parser_json(raw_info, instruction=""):
+    if not isinstance(raw_info, dict):
+        raise ValueError(f"Unsupported Stage 2 parser schema: {raw_info}")
+    info = dict(raw_info)
+    direction_attributes = _ensure_string_list(info.get("direction_attributes", []))
+    functional_part = str(
+        info.get("functional_part")
+        or info.get("part")
+        or (direction_attributes[0] if direction_attributes else "")
+    ).strip()
+    relation = _normalize_relation(info.get("relation") or _infer_relation_from_text(instruction))
+    normalized = {
+        "target_object": str(
+            info.get("target_object")
+            or info.get("picked_object")
+            or info.get("object")
+            or ""
+        ).strip(),
+        "functional_part": functional_part,
+        "relation": relation,
+        "reference_object": str(
+            info.get("reference_object")
+            or info.get("related_object")
+            or ""
+        ).strip(),
+        "direction_attributes": direction_attributes,
+        "parser_confidence": _normalize_confidence(info.get("parser_confidence"), default=0.0),
+    }
+    normalized["reference_frame"] = _normalize_reference_frame(
+        info.get("reference_frame"),
+        relation=normalized["relation"],
+        functional_part=normalized["functional_part"],
+        direction_attributes=normalized["direction_attributes"],
+    )
+    normalized["raw_text"] = str(info.get("raw_text", "")).strip()
+    return normalized
+
+
+def _normalize_stage2_fast_open6dor_parser_json(raw_info, instruction="", task_config=None):
+    if not isinstance(raw_info, dict):
+        raise ValueError(f"Unsupported Stage 2 fast parser schema: {raw_info}")
+    task_config = task_config or {}
+    info = dict(raw_info)
+    related_objects = _ensure_string_list(info.get("related_objects", []))
+    picked_object = str(
+        info.get("picked_object")
+        or info.get("target_object")
+        or task_config.get("target_obj_name")
+        or ""
+    ).strip()
+    relation = _normalize_relation(info.get("relation") or _infer_relation_from_text(instruction))
+    direction_attributes = _ensure_string_list(info.get("direction_attributes", []))
+    orientation_mode = str(info.get("orientation_mode", "")).strip()
+    routing_hints = info.get("routing_hints", {}) if isinstance(info.get("routing_hints"), dict) else {}
+    minimal_object_set = _ensure_string_list(routing_hints.get("minimal_object_set", []))
+    if not minimal_object_set:
+        minimal_object_set = [picked_object] + related_objects
+    normalized = {
+        "picked_object": picked_object,
+        "related_objects": related_objects,
+        "orientation_mode": orientation_mode,
+        "relation": relation,
+        "direction_attributes": direction_attributes,
+        "parser_confidence": _normalize_confidence(info.get("parser_confidence"), default=0.0),
+        "routing_hints": {
+            "minimal_object_set": [item for item in minimal_object_set if item],
+            "use_task_config": bool(routing_hints.get("use_task_config", bool(task_config))),
+            "fallback_required": bool(routing_hints.get("fallback_required", not picked_object)),
+        },
+    }
+    normalized["reference_frame"] = _normalize_reference_frame(
+        info.get("reference_frame"),
+        relation=normalized["relation"],
+        functional_part="",
+        direction_attributes=normalized["direction_attributes"],
+    )
+    normalized["raw_text"] = str(info.get("raw_text", "")).strip()
+    return normalized
+
+
 def _normalize_open6dor_joint_json(raw_info):
     if not isinstance(raw_info, dict):
         raise ValueError(f"Unsupported Open6DOR joint schema: {raw_info}")
@@ -356,6 +529,41 @@ def open6dor_parsing(qwen_model, processor, image_path, instruction):
     info['direction_attributes'] = direction_attributes
     print(info)
     return info
+
+
+def stage2_part_parser(qwen_model, processor, image_path, instruction):
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": stage2_part_parser_prompt},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image_path,
+                },
+                {
+                    "type": "text",
+                    "text": instruction + "\nReturn JSON only.",
+                },
+            ],
+        },
+    ]
+    output_text = _qwen_generate_text(
+        qwen_model,
+        processor,
+        messages,
+        max_new_tokens=_env_int("SOFAR_QWEN_STAGE2_PART_PARSE_MAX_NEW_TOKENS", 192),
+    )
+    raw_info = _load_qwen_json(output_text)
+    normalized = _normalize_stage2_part_parser_json(raw_info, instruction=instruction)
+    normalized["raw_text"] = output_text.strip()
+    print(normalized)
+    return normalized
 
 
 def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, picked_object_info, other_objects_info):
@@ -498,6 +706,55 @@ def open6dor_joint_reasoning(
             print("[open6dor] joint JSON parse failed, retrying with stricter prompt...")
 
     raise last_error
+
+
+def stage2_fast_open6dor_parser(qwen_model, processor, image_path, instruction, task_config=None):
+    task_config = task_config or {}
+    task_config_excerpt = {
+        "target_obj_name": task_config.get("target_obj_name", ""),
+        "instruction": task_config.get("instruction", ""),
+        "position_tag": task_config.get("position_tag", ""),
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": stage2_fast_open6dor_parser_prompt},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image_path,
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        f"Instruction: {instruction}\n"
+                        f"Task config excerpt: {json.dumps(task_config_excerpt, ensure_ascii=False)}\n"
+                        "Return JSON only."
+                    ),
+                },
+            ],
+        },
+    ]
+    output_text = _qwen_generate_text(
+        qwen_model,
+        processor,
+        messages,
+        max_new_tokens=_env_int("SOFAR_QWEN_STAGE2_FAST_PARSE_MAX_NEW_TOKENS", 192),
+    )
+    raw_info = _load_qwen_json(output_text)
+    normalized = _normalize_stage2_fast_open6dor_parser_json(
+        raw_info,
+        instruction=instruction,
+        task_config=task_config_excerpt,
+    )
+    normalized["raw_text"] = output_text.strip()
+    print(normalized)
+    return normalized
 
 
 def manip_parsing(qwen_model, processor, image_path, instruction):

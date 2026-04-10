@@ -1,9 +1,11 @@
 import os
 import argparse
 import json
+import csv
 import warnings
 import sys
 import gc
+import time
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
@@ -21,6 +23,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
 from serve.qwen_runtime import resolve_qwen_dtype
+from serve.stage3_grounding import (
+    crop_image_array,
+    expand_roi_mask,
+    first_detection_score,
+    first_detection_xyxy,
+    offset_xyxy,
+    save_stage3_cache,
+    serialize_xyxy,
+)
+from serve.stage4_point_data import (
+    build_colored_points_from_mask,
+    compute_geometry_priors,
+    sample_points,
+    save_stage4_cache,
+)
 
 warnings.filterwarnings("ignore")
 output_folder = str(runtime_paths.ensure_output_dir())
@@ -55,6 +72,27 @@ def parse_args():
         "--reset-progress",
         action="store_true",
         help="Ignore eval_spatialbench_progress.json and rerun the full dataset.",
+    )
+    parser.add_argument(
+        "--stage2-parser-only",
+        action="store_true",
+        help="Run Stage 2 parser smoke only and export structured parser outputs.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N samples. Primarily used with --stage2-parser-only.",
+    )
+    parser.add_argument(
+        "--stage3-grounding-only",
+        action="store_true",
+        help="Run Stage 3 grounding skeleton only and export object/part caches.",
+    )
+    parser.add_argument(
+        "--stage4-pointdata-only",
+        action="store_true",
+        help="Run Stage 4 point-data building from existing Stage 3 caches.",
     )
     return parser.parse_args()
 
@@ -209,6 +247,456 @@ def empty_result():
     }
 
 
+def write_csv_records(csv_path, records, fieldnames):
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in records:
+            writer.writerow(row)
+
+
+def run_stage2_parser_only(args, run_id, stage2_parse_fn):
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
+    records = []
+    for sample in tqdm(info_list, total=len(info_list)):
+        sample_id = sample["id"]
+        question = sample["question"]
+        image_path = spatialbench_dir / "images" / f"{sample_id}.png"
+        image = Image.open(image_path).convert("RGB")
+        error = None
+        parser_output = None
+        try:
+            parser_output = run_vlm_with_retry(stage2_parse_fn, question, image)
+        except Exception as exc:
+            error = str(exc)
+            print(f"[stage2-parser][spatialbench] sample {sample_id} failed: {exc}")
+        finally:
+            del image
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        records.append(
+            {
+                "id": sample_id,
+                "task_type": sample.get("task_type", ""),
+                "question_type": sample.get("question_type", ""),
+                "question": question,
+                "target_object": (parser_output or {}).get("target_object", ""),
+                "functional_part": (parser_output or {}).get("functional_part", ""),
+                "relation": (parser_output or {}).get("relation", ""),
+                "reference_frame": (parser_output or {}).get("reference_frame", ""),
+                "reference_object": (parser_output or {}).get("reference_object", ""),
+                "direction_attributes": json.dumps((parser_output or {}).get("direction_attributes", []), ensure_ascii=False),
+                "parser_confidence": (parser_output or {}).get("parser_confidence"),
+                "error": error,
+                "parser_output": parser_output,
+            }
+        )
+
+    summary = {
+        "mode": "stage2_parser_only",
+        "dataset": "spatialbench",
+        "total_samples": len(records),
+        "success_count": sum(1 for item in records if not item["error"]),
+        "error_count": sum(1 for item in records if item["error"]),
+        "records": records,
+    }
+    stable_name = "stage2_spatialbench_parser_records.json"
+    stable_path, _ = write_json_outputs(summary, output_folder, stable_name, run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "id",
+            "task_type",
+            "question_type",
+            "question",
+            "target_object",
+            "functional_part",
+            "relation",
+            "reference_frame",
+            "reference_object",
+            "direction_attributes",
+            "parser_confidence",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
+def _stage3_part_query(parser_output):
+    functional_part = str(parser_output.get("functional_part", "")).strip()
+    if functional_part:
+        return functional_part
+    direction_attributes = parser_output.get("direction_attributes", [])
+    if isinstance(direction_attributes, list) and direction_attributes:
+        return str(direction_attributes[0]).strip()
+    return ""
+
+
+def run_stage3_grounding_only(args, run_id, stage2_parse_fn):
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
+
+    cache_root = Path(output_folder) / "stage3_spatialbench_cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    detection_model = detection.get_model()
+    sam_model = sam.get_model()
+    records = []
+
+    for sample in tqdm(info_list, total=len(info_list)):
+        start_time = time.perf_counter()
+        sample_id = sample["id"]
+        question = sample["question"]
+        image_path = spatialbench_dir / "images" / f"{sample_id}.png"
+        image = Image.open(image_path).convert("RGB")
+        image_np = np.array(image)
+        object_mask = None
+        part_mask = None
+        cache_paths = {}
+        failed_stage = None
+        status = "success"
+        parser_output = None
+        object_bbox = None
+        part_bbox = None
+        object_score = None
+        part_score = None
+        error = None
+        part_query = ""
+        timings = {
+            "parser_sec": 0.0,
+            "object_grounding_sec": 0.0,
+            "object_sam_sec": 0.0,
+            "part_grounding_sec": 0.0,
+            "part_sam_sec": 0.0,
+        }
+
+        try:
+            stage_start = time.perf_counter()
+            parser_output = run_vlm_with_retry(stage2_parse_fn, question, image)
+            timings["parser_sec"] = round(time.perf_counter() - stage_start, 2)
+            target_object = str(parser_output.get("target_object", "")).strip()
+            if not target_object:
+                failed_stage = "parser"
+                raise ValueError("Stage 3 requires a non-empty target_object from the Stage 2 parser")
+            part_query = _stage3_part_query(parser_output)
+
+            stage_start = time.perf_counter()
+            object_detections = detection.get_detections(
+                image,
+                [target_object],
+                detection_model,
+                output_folder=output_folder,
+                single=True,
+                save_artifacts=False,
+            )
+            object_bbox = first_detection_xyxy(object_detections, image.width, image.height)
+            object_score = first_detection_score(object_detections)
+            timings["object_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
+            if object_bbox is None:
+                failed_stage = "object_grounding"
+                raise ValueError("Object grounding returned no usable bbox")
+
+            stage_start = time.perf_counter()
+            object_masks, _, _ = sam.get_mask(
+                image,
+                [target_object],
+                sam_model,
+                object_detections,
+                output_folder=output_folder,
+                save_artifacts=False,
+                prefer_single_mask=True,
+            )
+            timings["object_sam_sec"] = round(time.perf_counter() - stage_start, 2)
+            if len(object_masks) == 0:
+                failed_stage = "object_sam"
+                raise ValueError("Object SAM returned no mask")
+            object_mask = object_masks[0]
+
+            if part_query:
+                roi_image_np = crop_image_array(image_np, object_bbox)
+                roi_image = Image.fromarray(roi_image_np)
+                stage_start = time.perf_counter()
+                part_detections = detection.get_detections(
+                    roi_image,
+                    [part_query],
+                    detection_model,
+                    output_folder=output_folder,
+                    single=True,
+                    save_artifacts=False,
+                )
+                roi_part_bbox = first_detection_xyxy(part_detections, roi_image.width, roi_image.height)
+                part_score = first_detection_score(part_detections)
+                timings["part_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
+
+                if roi_part_bbox is None:
+                    status = "partial"
+                    failed_stage = "part_grounding"
+                else:
+                    stage_start = time.perf_counter()
+                    part_masks, _, _ = sam.get_mask(
+                        roi_image,
+                        [part_query],
+                        sam_model,
+                        part_detections,
+                        output_folder=output_folder,
+                        save_artifacts=False,
+                        prefer_single_mask=True,
+                    )
+                    timings["part_sam_sec"] = round(time.perf_counter() - stage_start, 2)
+                    if len(part_masks) == 0:
+                        status = "partial"
+                        failed_stage = "part_sam"
+                    else:
+                        part_mask = expand_roi_mask(part_masks[0], object_mask.shape, object_bbox)
+                        part_bbox = offset_xyxy(roi_part_bbox, object_bbox, image.width, image.height)
+            cache_payload = {
+                "dataset": "spatialbench",
+                "sample_id": sample_id,
+                "question": question,
+                "task_type": sample.get("task_type", ""),
+                "question_type": sample.get("question_type", ""),
+                "parser_output": parser_output,
+                "grounding": {
+                    "target_object": parser_output.get("target_object", ""),
+                    "functional_part": parser_output.get("functional_part", ""),
+                    "reference_object": parser_output.get("reference_object", ""),
+                    "object_bbox_xyxy": serialize_xyxy(object_bbox),
+                    "object_score": object_score,
+                    "part_query": part_query,
+                    "part_bbox_xyxy": serialize_xyxy(part_bbox),
+                    "part_score": part_score,
+                    "image_size": [image.width, image.height],
+                    "status": status,
+                    "failed_stage": failed_stage,
+                    "timings": timings,
+                },
+            }
+            cache_paths = save_stage3_cache(cache_root / str(sample_id), cache_payload, object_mask, part_mask)
+        except Exception as exc:
+            error = str(exc)
+            status = "error"
+            print(f"[stage3-grounding][spatialbench] sample {sample_id} failed: {exc}")
+            cache_payload = {
+                "dataset": "spatialbench",
+                "sample_id": sample_id,
+                "question": question,
+                "parser_output": parser_output,
+                "grounding": {
+                    "target_object": (parser_output or {}).get("target_object", ""),
+                    "functional_part": (parser_output or {}).get("functional_part", ""),
+                    "reference_object": (parser_output or {}).get("reference_object", ""),
+                    "object_bbox_xyxy": serialize_xyxy(object_bbox),
+                    "object_score": object_score,
+                    "part_query": part_query,
+                    "part_bbox_xyxy": serialize_xyxy(part_bbox),
+                    "part_score": part_score,
+                    "image_size": [image.width, image.height],
+                    "status": status,
+                    "failed_stage": failed_stage,
+                    "timings": timings,
+                    "error": error,
+                },
+            }
+            cache_paths = save_stage3_cache(cache_root / str(sample_id), cache_payload, object_mask, part_mask)
+        finally:
+            del image, image_np
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        total_sec = round(time.perf_counter() - start_time, 2)
+        records.append(
+            {
+                "id": sample_id,
+                "task_type": sample.get("task_type", ""),
+                "question_type": sample.get("question_type", ""),
+                "target_object": (parser_output or {}).get("target_object", ""),
+                "functional_part": (parser_output or {}).get("functional_part", ""),
+                "reference_object": (parser_output or {}).get("reference_object", ""),
+                "part_query": part_query,
+                "status": status,
+                "failed_stage": failed_stage,
+                "object_bbox_xyxy": json.dumps(serialize_xyxy(object_bbox), ensure_ascii=False),
+                "part_bbox_xyxy": json.dumps(serialize_xyxy(part_bbox), ensure_ascii=False),
+                "object_score": object_score,
+                "part_score": part_score,
+                "object_mask_path": cache_paths.get("object_mask_path"),
+                "part_mask_path": cache_paths.get("part_mask_path"),
+                "roi_meta_path": cache_paths.get("roi_meta_path"),
+                "cache_path": cache_paths.get("cache_path"),
+                "parser_sec": timings["parser_sec"],
+                "object_grounding_sec": timings["object_grounding_sec"],
+                "object_sam_sec": timings["object_sam_sec"],
+                "part_grounding_sec": timings["part_grounding_sec"],
+                "part_sam_sec": timings["part_sam_sec"],
+                "total_sec": total_sec,
+                "error": error,
+            }
+        )
+
+    summary = {
+        "mode": "stage3_grounding_only",
+        "dataset": "spatialbench",
+        "total_samples": len(records),
+        "success_count": sum(1 for item in records if item["status"] == "success"),
+        "partial_count": sum(1 for item in records if item["status"] == "partial"),
+        "error_count": sum(1 for item in records if item["status"] == "error"),
+        "records": records,
+    }
+    stable_path, _ = write_json_outputs(summary, output_folder, "stage3_spatialbench_grounding_records.json", run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "id",
+            "task_type",
+            "question_type",
+            "target_object",
+            "functional_part",
+            "reference_object",
+            "part_query",
+            "status",
+            "failed_stage",
+            "object_bbox_xyxy",
+            "part_bbox_xyxy",
+            "object_score",
+            "part_score",
+            "object_mask_path",
+            "part_mask_path",
+            "roi_meta_path",
+            "cache_path",
+            "parser_sec",
+            "object_grounding_sec",
+            "object_sam_sec",
+            "part_grounding_sec",
+            "part_sam_sec",
+            "total_sec",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
+def run_stage4_pointdata_only(args, run_id):
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
+
+    depth_model = depth_esti_model.get_model()
+    cache_root = Path(output_folder) / "stage3_spatialbench_cache"
+    point_root = Path(output_folder) / "stage4_spatialbench_point_cache"
+    point_root.mkdir(parents=True, exist_ok=True)
+    sample_points_num = int(os.getenv("SOFAR_STAGE4_SAMPLE_POINTS", "4096"))
+    records = []
+
+    for sample in tqdm(info_list, total=len(info_list)):
+        start_time = time.perf_counter()
+        sample_id = sample["id"]
+        image_path = spatialbench_dir / "images" / f"{sample_id}.png"
+        cache_dir = cache_root / str(sample_id)
+        cache_json = cache_dir / "object_part_cache.json"
+        object_mask_path = cache_dir / "object_mask.npz"
+        part_mask_path = cache_dir / "part_mask.npz"
+        status = "success"
+        error = None
+        object_points = np.zeros((0, 6), dtype=np.float32)
+        part_points = np.zeros((0, 6), dtype=np.float32)
+        priors = {}
+        cache_paths = {}
+
+        try:
+            if not cache_json.exists() or not object_mask_path.exists():
+                raise FileNotFoundError("Stage 4 requires existing Stage 3 cache files")
+
+            with cache_json.open("r", encoding="utf-8") as f:
+                stage3_cache = json.load(f)
+            object_mask = np.load(object_mask_path)["mask"]
+            part_mask = np.load(part_mask_path)["mask"] if part_mask_path.exists() else None
+
+            image = Image.open(image_path).convert("RGB")
+            image_np = np.array(image)
+            depth, _, pcd = depth_esti_model.depth_estimation(image, depth_model, output_folder=output_folder)
+
+            object_points = build_colored_points_from_mask(pcd, image_np, object_mask)
+            part_points = (
+                build_colored_points_from_mask(pcd, image_np, part_mask)
+                if part_mask is not None and part_mask.any()
+                else np.zeros((0, 6), dtype=np.float32)
+            )
+            object_points = sample_points(object_points, sample_points_num)
+            part_points = sample_points(part_points, sample_points_num)
+            priors = compute_geometry_priors(object_points, part_points)
+            stage4_payload = {
+                "dataset": "spatialbench",
+                "sample_id": sample_id,
+                "stage3_cache_path": str(cache_json),
+                "parser_output": stage3_cache.get("parser_output", {}),
+                "grounding": stage3_cache.get("grounding", {}),
+                "geometry_priors": priors,
+                "sample_points": sample_points_num,
+            }
+            cache_paths = save_stage4_cache(point_root / str(sample_id), stage4_payload, object_points, part_points)
+        except Exception as exc:
+            error = str(exc)
+            status = "error"
+            print(f"[stage4-pointdata][spatialbench] sample {sample_id} failed: {exc}")
+
+        total_sec = round(time.perf_counter() - start_time, 2)
+        records.append(
+            {
+                "id": sample_id,
+                "status": status,
+                "object_point_count": int(len(object_points)),
+                "part_point_count": int(len(part_points)),
+                "part_ratio": priors.get("part_ratio"),
+                "cache_path": cache_paths.get("cache_path"),
+                "object_points_path": cache_paths.get("object_points_path"),
+                "part_points_path": cache_paths.get("part_points_path"),
+                "total_sec": total_sec,
+                "error": error,
+            }
+        )
+
+    summary = {
+        "mode": "stage4_pointdata_only",
+        "dataset": "spatialbench",
+        "total_samples": len(records),
+        "success_count": sum(1 for item in records if item["status"] == "success"),
+        "error_count": sum(1 for item in records if item["status"] == "error"),
+        "records": records,
+    }
+    stable_path, _ = write_json_outputs(summary, output_folder, "stage4_spatialbench_point_records.json", run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "id",
+            "status",
+            "object_point_count",
+            "part_point_count",
+            "part_ratio",
+            "cache_path",
+            "object_points_path",
+            "part_points_path",
+            "total_sec",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
 def recover_progress_from_log(log_path, info_list):
     log_path = Path(log_path)
     if not log_path.exists():
@@ -299,8 +787,27 @@ def process_info(info):
 
 if __name__ == "__main__":
     args = parse_args()
+    selected_modes = sum(
+        1
+        for flag in (
+            args.stage2_parser_only,
+            args.stage3_grounding_only,
+            args.stage4_pointdata_only,
+        )
+        if flag
+    )
+    if selected_modes > 1:
+        raise ValueError("Only one of --stage2-parser-only / --stage3-grounding-only / --stage4-pointdata-only can be used at a time.")
     speed_profile_settings = apply_speed_profile(args.speed_profile)
-    run_id, _ = setup_timestamped_logging(output_folder, "eval_spatialbench")
+    if args.stage2_parser_only:
+        log_prefix = "stage2_spatialbench_parser"
+    elif args.stage3_grounding_only:
+        log_prefix = "stage3_spatialbench_grounding"
+    elif args.stage4_pointdata_only:
+        log_prefix = "stage4_spatialbench_pointdata"
+    else:
+        log_prefix = "eval_spatialbench"
+    run_id, _ = setup_timestamped_logging(output_folder, log_prefix)
     if args.speed_profile != "off":
         print(f"[spatialbench] speed_profile={args.speed_profile}")
         print(f"[spatialbench] speed_profile_settings={speed_profile_settings}")
@@ -308,6 +815,7 @@ if __name__ == "__main__":
     print(f"LLM backend: {llm_backend}")
 
     if llm_backend == "qwen":
+        from serve.qwen_inference import stage2_part_parser as qwen_stage2_part_parser
         from serve.qwen_inference import vqa_parsing as qwen_vqa_parsing
         from serve.qwen_inference import vqa_spatial_reasoning as qwen_vqa_spatial_reasoning
         qwen_model, processor = load_qwen_model()
@@ -317,6 +825,9 @@ if __name__ == "__main__":
 
         def reason_fn(command, image, scene_graph, eval):
             return qwen_vqa_spatial_reasoning(qwen_model, processor, image, command, scene_graph, eval=eval)
+
+        def stage2_parse_fn(command, image):
+            return qwen_stage2_part_parser(qwen_model, processor, image, command)
     else:
         from serve.chatgpt import vqa_parsing as chatgpt_vqa_parsing
         from serve.chatgpt import vqa_spatial_reasoning as chatgpt_vqa_spatial_reasoning
@@ -326,6 +837,19 @@ if __name__ == "__main__":
 
         def reason_fn(command, image, scene_graph, eval):
             return chatgpt_vqa_spatial_reasoning(image, command, scene_graph, eval=eval)
+
+        def stage2_parse_fn(command, image):
+            raise NotImplementedError("Stage 2 parser smoke is currently implemented for the qwen backend only.")
+
+    if args.stage2_parser_only:
+        run_stage2_parser_only(args, run_id, stage2_parse_fn)
+        raise SystemExit(0)
+    if args.stage3_grounding_only:
+        run_stage3_grounding_only(args, run_id, stage2_parse_fn)
+        raise SystemExit(0)
+    if args.stage4_pointdata_only:
+        run_stage4_pointdata_only(args, run_id)
+        raise SystemExit(0)
 
     detection_model = detection.get_model()
     sam_model = sam.get_model()

@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 import statistics
@@ -30,9 +31,25 @@ from serve.utils import generate_rotation_matrix, get_point_cloud_from_rgbd
 from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
 from serve.qwen_runtime import resolve_qwen_dtype
+from serve.stage3_grounding import (
+    crop_image_array,
+    expand_roi_mask,
+    first_detection_score,
+    first_detection_xyxy,
+    offset_xyxy,
+    save_stage3_cache,
+    serialize_xyxy,
+)
+from serve.stage4_point_data import (
+    build_colored_points_from_mask,
+    compute_geometry_priors,
+    sample_points,
+    save_stage4_cache,
+)
 
 warnings.filterwarnings("ignore")
 open6dor_parsing_fn = None
+open6dor_stage2_fast_parser_fn = None
 open6dor_joint_reasoning_fn = None
 open6dor_spatial_reasoning_fn = None
 detection_model = None
@@ -105,6 +122,21 @@ def parse_args():
         "--reset-progress",
         action="store_true",
         help="Ignore the current mode's progress file and start this run fresh.",
+    )
+    parser.add_argument(
+        "--stage2-parser-only",
+        action="store_true",
+        help="Run Stage 2 fast parser smoke only and export structured parser outputs.",
+    )
+    parser.add_argument(
+        "--stage3-grounding-only",
+        action="store_true",
+        help="Run Stage 3 grounding skeleton only and export object/part caches.",
+    )
+    parser.add_argument(
+        "--stage4-pointdata-only",
+        action="store_true",
+        help="Run Stage 4 point-data building from existing Stage 3 caches.",
     )
     return parser.parse_args()
 
@@ -794,24 +826,512 @@ def process_dataset(task_dir):
         }
 
 
+def write_csv_records(csv_path, records, fieldnames):
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in records:
+            writer.writerow(row)
+
+
+def run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context):
+    records = []
+    for task_dir in tqdm(dataset_paths, total=len(dataset_paths)):
+        error = None
+        parser_output = None
+        prompt = ""
+        task_info = {}
+        try:
+            with open(os.path.join(task_dir, "task_config_new5.json"), "r", encoding="utf-8") as f:
+                task_info = json.load(f)
+            prompt = (
+                f"Pick the {task_info['target_obj_name']}. " + task_info["instruction"]
+                if "rot" in task_dir
+                else task_info["instruction"]
+            )
+            image_path = os.path.join(task_dir, "isaac_render-rgb-0-1.png")
+            image = Image.open(image_path).convert("RGB")
+            parser_output = open6dor_stage2_fast_parser_fn(prompt, image, task_info)
+        except Exception as exc:
+            error = str(exc)
+            print(f"[stage2-parser][open6dor] {task_dir} failed: {exc}")
+        finally:
+            try:
+                del image
+            except Exception:
+                pass
+
+        records.append(
+            {
+                "task_dir": task_dir,
+                "picked_object": (parser_output or {}).get("picked_object", ""),
+                "related_objects": json.dumps((parser_output or {}).get("related_objects", []), ensure_ascii=False),
+                "orientation_mode": (parser_output or {}).get("orientation_mode", ""),
+                "relation": (parser_output or {}).get("relation", ""),
+                "reference_frame": (parser_output or {}).get("reference_frame", ""),
+                "direction_attributes": json.dumps((parser_output or {}).get("direction_attributes", []), ensure_ascii=False),
+                "parser_confidence": (parser_output or {}).get("parser_confidence"),
+                "routing_hints": json.dumps((parser_output or {}).get("routing_hints", {}), ensure_ascii=False),
+                "error": error,
+                "instruction": prompt,
+                "parser_output": parser_output,
+            }
+        )
+
+    summary = {
+        "mode": "stage2_parser_only",
+        "dataset": "open6dor",
+        "pilot": run_context.get("pilot"),
+        "task_list": run_context.get("task_list"),
+        "total_tasks": len(records),
+        "success_count": sum(1 for item in records if not item["error"]),
+        "error_count": sum(1 for item in records if item["error"]),
+        "records": records,
+    }
+    stable_name = (
+        f"stage2_open6dor_parser_records_{run_context['artifact_tag']}.json"
+        if run_context.get("artifact_tag")
+        else "stage2_open6dor_parser_records.json"
+    )
+    stable_path, _ = write_json_outputs(summary, output_dir, stable_name, run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "task_dir",
+            "instruction",
+            "picked_object",
+            "related_objects",
+            "orientation_mode",
+            "relation",
+            "reference_frame",
+            "direction_attributes",
+            "parser_confidence",
+            "routing_hints",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
+def _stage3_fast_part_query(parser_output):
+    direction_attributes = parser_output.get("direction_attributes", [])
+    if isinstance(direction_attributes, list) and direction_attributes:
+        return str(direction_attributes[0]).strip()
+    return ""
+
+
+def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
+    records = []
+    for task_dir in tqdm(dataset_paths, total=len(dataset_paths)):
+        start_time = time.perf_counter()
+        error = None
+        failed_stage = None
+        status = "success"
+        parser_output = None
+        object_bbox = None
+        part_bbox = None
+        object_score = None
+        part_score = None
+        object_mask = None
+        part_mask = None
+        cache_paths = {}
+        prompt = ""
+        task_info = {}
+        part_query = ""
+        timings = {
+            "parser_sec": 0.0,
+            "object_grounding_sec": 0.0,
+            "object_sam_sec": 0.0,
+            "part_grounding_sec": 0.0,
+            "part_sam_sec": 0.0,
+        }
+
+        try:
+            image_path = os.path.join(task_dir, "isaac_render-rgb-0-1.png")
+            with open(os.path.join(task_dir, "task_config_new5.json"), "r", encoding="utf-8") as f:
+                task_info = json.load(f)
+            prompt = (
+                f"Pick the {task_info['target_obj_name']}. " + task_info["instruction"]
+                if "rot" in task_dir
+                else task_info["instruction"]
+            )
+            image = Image.open(image_path).convert("RGB")
+            image_np = np.array(image)
+
+            stage_start = time.perf_counter()
+            parser_output = open6dor_stage2_fast_parser_fn(prompt, image, task_info)
+            timings["parser_sec"] = round(time.perf_counter() - stage_start, 2)
+
+            picked_object = str(parser_output.get("picked_object", "")).strip()
+            if not picked_object:
+                failed_stage = "parser"
+                raise ValueError("Stage 3 requires a non-empty picked_object from the fast parser")
+            part_query = _stage3_fast_part_query(parser_output)
+
+            stage_start = time.perf_counter()
+            object_detections = detection.get_detections(
+                image,
+                [picked_object],
+                detection_model,
+                output_folder=output_dir,
+                single=True,
+                save_artifacts=False,
+            )
+            object_bbox = first_detection_xyxy(object_detections, image.width, image.height)
+            object_score = first_detection_score(object_detections)
+            timings["object_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
+            if object_bbox is None:
+                failed_stage = "object_grounding"
+                raise ValueError("Object grounding returned no usable bbox")
+
+            stage_start = time.perf_counter()
+            object_masks, _, _ = sam.get_mask(
+                image,
+                [picked_object],
+                sam_model,
+                object_detections,
+                output_folder=output_dir,
+                save_artifacts=False,
+                prefer_single_mask=True,
+            )
+            timings["object_sam_sec"] = round(time.perf_counter() - stage_start, 2)
+            if len(object_masks) == 0:
+                failed_stage = "object_sam"
+                raise ValueError("Object SAM returned no mask")
+            object_mask = object_masks[0]
+
+            if part_query:
+                roi_image_np = crop_image_array(image_np, object_bbox)
+                roi_image = Image.fromarray(roi_image_np)
+                stage_start = time.perf_counter()
+                part_detections = detection.get_detections(
+                    roi_image,
+                    [part_query],
+                    detection_model,
+                    output_folder=output_dir,
+                    single=True,
+                    save_artifacts=False,
+                )
+                roi_part_bbox = first_detection_xyxy(part_detections, roi_image.width, roi_image.height)
+                part_score = first_detection_score(part_detections)
+                timings["part_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
+                if roi_part_bbox is None:
+                    status = "partial"
+                    failed_stage = "part_grounding"
+                else:
+                    stage_start = time.perf_counter()
+                    part_masks, _, _ = sam.get_mask(
+                        roi_image,
+                        [part_query],
+                        sam_model,
+                        part_detections,
+                        output_folder=output_dir,
+                        save_artifacts=False,
+                        prefer_single_mask=True,
+                    )
+                    timings["part_sam_sec"] = round(time.perf_counter() - stage_start, 2)
+                    if len(part_masks) == 0:
+                        status = "partial"
+                        failed_stage = "part_sam"
+                    else:
+                        part_mask = expand_roi_mask(part_masks[0], object_mask.shape, object_bbox)
+                        part_bbox = offset_xyxy(roi_part_bbox, object_bbox, image.width, image.height)
+
+            stage3_dir = Path(task_dir) / "output" / "stage3"
+            cache_payload = {
+                "dataset": "open6dor",
+                "task_dir": task_dir,
+                "instruction": prompt,
+                "parser_output": parser_output,
+                "grounding": {
+                    "picked_object": parser_output.get("picked_object", ""),
+                    "related_objects": parser_output.get("related_objects", []),
+                    "orientation_mode": parser_output.get("orientation_mode", ""),
+                    "reference_frame": parser_output.get("reference_frame", ""),
+                    "part_query": part_query,
+                    "object_bbox_xyxy": serialize_xyxy(object_bbox),
+                    "part_bbox_xyxy": serialize_xyxy(part_bbox),
+                    "object_score": object_score,
+                    "part_score": part_score,
+                    "reference_strategy": "lightweight_only",
+                    "image_size": [image.width, image.height],
+                    "status": status,
+                    "failed_stage": failed_stage,
+                    "timings": timings,
+                },
+            }
+            cache_paths = save_stage3_cache(stage3_dir, cache_payload, object_mask, part_mask)
+        except Exception as exc:
+            error = str(exc)
+            status = "error"
+            print(f"[stage3-grounding][open6dor] {task_dir} failed: {exc}")
+            stage3_dir = Path(task_dir) / "output" / "stage3"
+            cache_payload = {
+                "dataset": "open6dor",
+                "task_dir": task_dir,
+                "instruction": prompt,
+                "parser_output": parser_output,
+                "grounding": {
+                    "picked_object": (parser_output or {}).get("picked_object", ""),
+                    "related_objects": (parser_output or {}).get("related_objects", []),
+                    "orientation_mode": (parser_output or {}).get("orientation_mode", ""),
+                    "reference_frame": (parser_output or {}).get("reference_frame", ""),
+                    "part_query": part_query,
+                    "object_bbox_xyxy": serialize_xyxy(object_bbox),
+                    "part_bbox_xyxy": serialize_xyxy(part_bbox),
+                    "object_score": object_score,
+                    "part_score": part_score,
+                    "reference_strategy": "lightweight_only",
+                    "status": status,
+                    "failed_stage": failed_stage,
+                    "timings": timings,
+                    "error": error,
+                },
+            }
+            cache_paths = save_stage3_cache(stage3_dir, cache_payload, object_mask, part_mask)
+
+        total_sec = round(time.perf_counter() - start_time, 2)
+        records.append(
+            {
+                "task_dir": task_dir,
+                "picked_object": (parser_output or {}).get("picked_object", ""),
+                "related_objects": json.dumps((parser_output or {}).get("related_objects", []), ensure_ascii=False),
+                "orientation_mode": (parser_output or {}).get("orientation_mode", ""),
+                "reference_frame": (parser_output or {}).get("reference_frame", ""),
+                "part_query": part_query,
+                "status": status,
+                "failed_stage": failed_stage,
+                "object_bbox_xyxy": json.dumps(serialize_xyxy(object_bbox), ensure_ascii=False),
+                "part_bbox_xyxy": json.dumps(serialize_xyxy(part_bbox), ensure_ascii=False),
+                "object_score": object_score,
+                "part_score": part_score,
+                "roi_meta_path": cache_paths.get("roi_meta_path"),
+                "cache_path": cache_paths.get("cache_path"),
+                "object_mask_path": cache_paths.get("object_mask_path"),
+                "part_mask_path": cache_paths.get("part_mask_path"),
+                "parser_sec": timings["parser_sec"],
+                "object_grounding_sec": timings["object_grounding_sec"],
+                "object_sam_sec": timings["object_sam_sec"],
+                "part_grounding_sec": timings["part_grounding_sec"],
+                "part_sam_sec": timings["part_sam_sec"],
+                "total_sec": total_sec,
+                "error": error,
+            }
+        )
+
+    summary = {
+        "mode": "stage3_grounding_only",
+        "dataset": "open6dor",
+        "pilot": run_context.get("pilot"),
+        "task_list": run_context.get("task_list"),
+        "total_tasks": len(records),
+        "success_count": sum(1 for item in records if item["status"] == "success"),
+        "partial_count": sum(1 for item in records if item["status"] == "partial"),
+        "error_count": sum(1 for item in records if item["status"] == "error"),
+        "records": records,
+    }
+    stable_name = (
+        f"stage3_open6dor_grounding_records_{run_context['artifact_tag']}.json"
+        if run_context.get("artifact_tag")
+        else "stage3_open6dor_grounding_records.json"
+    )
+    stable_path, _ = write_json_outputs(summary, output_dir, stable_name, run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "task_dir",
+            "picked_object",
+            "related_objects",
+            "orientation_mode",
+            "reference_frame",
+            "part_query",
+            "status",
+            "failed_stage",
+            "object_bbox_xyxy",
+            "part_bbox_xyxy",
+            "object_score",
+            "part_score",
+            "roi_meta_path",
+            "cache_path",
+            "object_mask_path",
+            "part_mask_path",
+            "parser_sec",
+            "object_grounding_sec",
+            "object_sam_sec",
+            "part_grounding_sec",
+            "part_sam_sec",
+            "total_sec",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
+def run_stage4_pointdata_only(dataset_paths, output_dir, run_id, run_context):
+    records = []
+    sample_points_num = int(os.getenv("SOFAR_STAGE4_SAMPLE_POINTS", "4096"))
+    for task_dir in tqdm(dataset_paths, total=len(dataset_paths)):
+        start_time = time.perf_counter()
+        error = None
+        status = "success"
+        object_points = np.zeros((0, 6), dtype=np.float32)
+        part_points = np.zeros((0, 6), dtype=np.float32)
+        priors = {}
+        cache_paths = {}
+        try:
+            image_path = os.path.join(task_dir, "isaac_render-rgb-0-1.png")
+            depth_path = os.path.join(task_dir, "isaac_render-depth-0-1.npy")
+            stage3_dir = Path(task_dir) / "output" / "stage3"
+            cache_json = stage3_dir / "object_part_cache.json"
+            object_mask_path = stage3_dir / "object_mask.npz"
+            part_mask_path = stage3_dir / "part_mask.npz"
+            if not cache_json.exists() or not object_mask_path.exists():
+                raise FileNotFoundError("Stage 4 requires existing Stage 3 cache files")
+
+            with cache_json.open("r", encoding="utf-8") as f:
+                stage3_cache = json.load(f)
+            object_mask = np.load(object_mask_path)["mask"]
+            part_mask = np.load(part_mask_path)["mask"] if part_mask_path.exists() else None
+
+            image = Image.open(image_path).convert("RGB")
+            image_np = np.array(image)
+            depth = np.load(depth_path)
+            vinvs = np.array(
+                [
+                    [0.0, 1.0, 0.0, 0.0],
+                    [-0.9028605, -0.0, 0.42993355, -0.0],
+                    [0.42993355, -0.0, 0.9028605, -0.0],
+                    [1.0, 0.0, 1.2, 1.0],
+                ]
+            )
+            projs = [
+                [1.7320507, 0.0, 0.0, 0.0],
+                [0.0, 2.5980759, 0.0, 0.0],
+                [0.0, 0.0, 0.0, -1.0],
+                [0.0, 0.0, 0.05, 0.0],
+            ]
+            pcd = get_point_cloud_from_rgbd(depth, np.array(image), vinvs, projs).cpu().numpy().astype(np.float32)
+            pcd = pcd.reshape(depth.shape[0], depth.shape[1], 6)
+
+            object_points = sample_points(pcd[object_mask], sample_points_num)
+            part_points = (
+                sample_points(pcd[part_mask], sample_points_num)
+                if part_mask is not None and part_mask.any()
+                else np.zeros((0, 6), dtype=np.float32)
+            )
+            priors = compute_geometry_priors(object_points, part_points)
+            stage4_payload = {
+                "dataset": "open6dor",
+                "task_dir": task_dir,
+                "stage3_cache_path": str(cache_json),
+                "parser_output": stage3_cache.get("parser_output", {}),
+                "grounding": stage3_cache.get("grounding", {}),
+                "geometry_priors": priors,
+                "sample_points": sample_points_num,
+            }
+            cache_paths = save_stage4_cache(Path(task_dir) / "output" / "stage4", stage4_payload, object_points, part_points)
+        except Exception as exc:
+            error = str(exc)
+            status = "error"
+            print(f"[stage4-pointdata][open6dor] {task_dir} failed: {exc}")
+
+        total_sec = round(time.perf_counter() - start_time, 2)
+        records.append(
+            {
+                "task_dir": task_dir,
+                "status": status,
+                "object_point_count": int(len(object_points)),
+                "part_point_count": int(len(part_points)),
+                "part_ratio": priors.get("part_ratio"),
+                "cache_path": cache_paths.get("cache_path"),
+                "object_points_path": cache_paths.get("object_points_path"),
+                "part_points_path": cache_paths.get("part_points_path"),
+                "total_sec": total_sec,
+                "error": error,
+            }
+        )
+
+    summary = {
+        "mode": "stage4_pointdata_only",
+        "dataset": "open6dor",
+        "pilot": run_context.get("pilot"),
+        "task_list": run_context.get("task_list"),
+        "total_tasks": len(records),
+        "success_count": sum(1 for item in records if item["status"] == "success"),
+        "error_count": sum(1 for item in records if item["status"] == "error"),
+        "records": records,
+    }
+    stable_name = (
+        f"stage4_open6dor_point_records_{run_context['artifact_tag']}.json"
+        if run_context.get("artifact_tag")
+        else "stage4_open6dor_point_records.json"
+    )
+    stable_path, _ = write_json_outputs(summary, output_dir, stable_name, run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        records,
+        [
+            "task_dir",
+            "status",
+            "object_point_count",
+            "part_point_count",
+            "part_ratio",
+            "cache_path",
+            "object_points_path",
+            "part_points_path",
+            "total_sec",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return summary
+
+
 if __name__ == "__main__":
     args = parse_args()
+    selected_modes = sum(
+        [
+            args.stage2_parser_only,
+            args.stage3_grounding_only,
+            args.stage4_pointdata_only,
+        ]
+    )
+    if selected_modes > 1:
+        raise ValueError("Only one of --stage2-parser-only, --stage3-grounding-only, or --stage4-pointdata-only may be used at a time.")
     output_dir = runtime_paths.ensure_output_dir()
     dataset_root = runtime_paths.open6dor_dataset_dir()
     run_context = build_run_context(args, dataset_root)
     run_context["speed_profile_settings"] = apply_speed_profile(args.speed_profile)
 
-    run_id, _ = setup_timestamped_logging(output_dir, run_context["log_prefix"])
+    log_prefix = run_context["log_prefix"]
+    if args.stage2_parser_only:
+        log_prefix = f"stage2_{log_prefix}"
+    elif args.stage3_grounding_only:
+        log_prefix = f"stage3_{log_prefix}"
+    elif args.stage4_pointdata_only:
+        log_prefix = f"stage4_{log_prefix}"
+    run_id, _ = setup_timestamped_logging(output_dir, log_prefix)
     dataset_paths = run_context["dataset_paths"]
-    RUN_RECORDS, processed_task_dirs = load_progress(
-        output_dir,
-        run_context["artifact_tag"],
-        reset_progress=args.reset_progress,
-    )
-    if processed_task_dirs:
-        print(f"[open6dor] resuming from progress file with {len(processed_task_dirs)} completed tasks")
-    if args.reset_progress:
-        print("[open6dor] starting fresh because --reset-progress was provided")
+    RUN_RECORDS = []
+    processed_task_dirs = set()
+    stage_only_mode = args.stage2_parser_only or args.stage3_grounding_only or args.stage4_pointdata_only
+    if not stage_only_mode:
+        RUN_RECORDS, processed_task_dirs = load_progress(
+            output_dir,
+            run_context["artifact_tag"],
+            reset_progress=args.reset_progress,
+        )
+        if processed_task_dirs:
+            print(f"[open6dor] resuming from progress file with {len(processed_task_dirs)} completed tasks")
+        if args.reset_progress:
+            print("[open6dor] starting fresh because --reset-progress was provided")
 
     print(f"[open6dor] run_mode={run_context['run_mode']}")
     if run_context.get("pilot"):
@@ -822,26 +1342,11 @@ if __name__ == "__main__":
     if run_context["speed_profile_settings"]:
         print(f"[open6dor] speed_profile_settings={run_context['speed_profile_settings']}")
     print(f"[open6dor] discovered {len(dataset_paths)} task directories")
-
-    detection_model = detection.get_model()
-    sam_model = sam.get_model()
-    orientation_model = orientation.get_model()
-    ORIENTATION_TEMPLATES = load_orientation_templates()
     llm_backend = resolve_llm_backend()
     print(f"LLM backend: {llm_backend}")
 
-    RUN_OPTIONS.update(
-        {
-            "save_debug_artifacts": _env_flag("SOFAR_SAVE_DEBUG_ARTIFACTS", True),
-            "prefer_single_mask": _env_flag("SOFAR_SAM_PREFER_SINGLE_MASK", False),
-            "use_perception_cache": _env_flag("SOFAR_OPEN6DOR_USE_PERCEPTION_CACHE", True),
-        }
-    )
-    print(f"[open6dor] save_debug_artifacts={RUN_OPTIONS['save_debug_artifacts']}")
-    print(f"[open6dor] prefer_single_mask={RUN_OPTIONS['prefer_single_mask']}")
-    print(f"[open6dor] use_perception_cache={RUN_OPTIONS['use_perception_cache']}")
-
-    if llm_backend == "qwen":
+    if llm_backend == "qwen" and not args.stage4_pointdata_only:
+        from serve.qwen_inference import stage2_fast_open6dor_parser as qwen_stage2_fast_open6dor_parser
         from serve.qwen_inference import open6dor_joint_reasoning as qwen_open6dor_joint_reasoning
         from serve.qwen_inference import open6dor_parsing as qwen_open6dor_parsing
         from serve.qwen_inference import open6dor_spatial_reasoning as qwen_open6dor_spatial_reasoning
@@ -865,7 +1370,10 @@ if __name__ == "__main__":
         def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info):
             return qwen_open6dor_spatial_reasoning(qwen_model, processor, img, command, picked_info, other_info)
 
-    else:
+        def open6dor_stage2_fast_parser_fn(command, img, task_info):
+            return qwen_stage2_fast_open6dor_parser(qwen_model, processor, img, command, task_info)
+
+    elif llm_backend != "qwen":
         from serve.chatgpt import open6dor_parsing as chatgpt_open6dor_parsing
         from serve.chatgpt import open6dor_spatial_reasoning as chatgpt_open6dor_spatial_reasoning
 
@@ -876,6 +1384,57 @@ if __name__ == "__main__":
 
         def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info):
             return chatgpt_open6dor_spatial_reasoning(img, command, picked_info, other_info)
+
+        def open6dor_stage2_fast_parser_fn(command, img, task_info):
+            raise NotImplementedError("Stage 2 fast parser smoke is currently implemented for the qwen backend only.")
+
+    if args.stage2_parser_only:
+        if args.limit is not None:
+            dataset_paths = dataset_paths[: args.limit]
+            print(f"[open6dor] applying --limit {args.limit}, parser smoke reduced to {len(dataset_paths)} tasks")
+        run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context)
+        raise SystemExit(0)
+    if args.stage3_grounding_only:
+        if llm_backend != "qwen":
+            raise NotImplementedError("Stage 3 grounding-only mode currently requires the qwen backend for Stage 2 fast parser output.")
+        detection_model = detection.get_model()
+        sam_model = sam.get_model()
+        RUN_OPTIONS.update(
+            {
+                "save_debug_artifacts": _env_flag("SOFAR_SAVE_DEBUG_ARTIFACTS", False),
+                "prefer_single_mask": _env_flag("SOFAR_SAM_PREFER_SINGLE_MASK", True),
+                "use_perception_cache": False,
+            }
+        )
+        print(f"[open6dor] save_debug_artifacts={RUN_OPTIONS['save_debug_artifacts']}")
+        print(f"[open6dor] prefer_single_mask={RUN_OPTIONS['prefer_single_mask']}")
+        if args.limit is not None:
+            dataset_paths = dataset_paths[: args.limit]
+            print(f"[open6dor] applying --limit {args.limit}, stage3 grounding reduced to {len(dataset_paths)} tasks")
+        run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context)
+        raise SystemExit(0)
+    if args.stage4_pointdata_only:
+        if args.limit is not None:
+            dataset_paths = dataset_paths[: args.limit]
+            print(f"[open6dor] applying --limit {args.limit}, stage4 point-data reduced to {len(dataset_paths)} tasks")
+        run_stage4_pointdata_only(dataset_paths, output_dir, run_id, run_context)
+        raise SystemExit(0)
+
+    detection_model = detection.get_model()
+    sam_model = sam.get_model()
+    orientation_model = orientation.get_model()
+    ORIENTATION_TEMPLATES = load_orientation_templates()
+
+    RUN_OPTIONS.update(
+        {
+            "save_debug_artifacts": _env_flag("SOFAR_SAVE_DEBUG_ARTIFACTS", True),
+            "prefer_single_mask": _env_flag("SOFAR_SAM_PREFER_SINGLE_MASK", False),
+            "use_perception_cache": _env_flag("SOFAR_OPEN6DOR_USE_PERCEPTION_CACHE", True),
+        }
+    )
+    print(f"[open6dor] save_debug_artifacts={RUN_OPTIONS['save_debug_artifacts']}")
+    print(f"[open6dor] prefer_single_mask={RUN_OPTIONS['prefer_single_mask']}")
+    print(f"[open6dor] use_perception_cache={RUN_OPTIONS['use_perception_cache']}")
 
     pending_dataset_paths = [p for p in dataset_paths if p not in processed_task_dirs]
     skipped_existing = []

@@ -1,31 +1,146 @@
-当前默认就是本地 Qwen，后续服务器命令不需要再执行 unset SOFAR_LLM_BACKEND。
+当前默认就是本地 Qwen，服务器命令不需要再执行 `unset SOFAR_LLM_BACKEND`。
 
-Stage 1 当前进度：
-spatialbench全量跑通、open6dor实操数据集跑了一百个，目前进行效率优化，单次open6dor耗时约一分钟一个。
+本次修改简介：
+1. Stage 2 本地开发已完成：
+   - 补入 PSCR 主线 Part-aware parser prompt
+   - 补入 Fast Open6DOR 辅助 parser prompt
+   - 补入统一 schema、JSON 清洗与归一化逻辑
+   - 在现有入口中补入 `stage2-parser-only` 手动模式
+2. Stage 3 本地骨架已完成：
+   - 补入 object grounding + part grounding 两段式流程
+   - 补入 `object_part_cache.json`、`object_mask.npz`、`part_mask.npz`、`roi_meta.json`
+   - 在现有入口中补入 `stage3-grounding-only` 手动模式
+   - Fast Open6DOR 只对 picked object 做重点 grounding，reference object 默认轻处理
+3. Stage 4 本地骨架已完成：
+   - 补入 object/part point data 构建
+   - 补入 `point_data_cache.json`、`object_points.npz`、`part_points.npz`
+   - 在现有入口中补入 `stage4-pointdata-only` 手动模式
+4. 本轮没有新增独立脚本；上传后只需要手动执行命令，不需要在服务器上临时再写工具。
 
-上传后，使用保守策略，现在已经改成了调用一次qwen，并且加入了缓存机制。
-  把 Open6DOR 主批处理默认改成了：
-  最小对象集合 -> detection/SAM/scene graph -> 单次 joint Qwen
-  保留旧双阶段路径作为 fallback，joint 失败会自动退回
-  接入单案例感知缓存：
-  output/perception_cache.json
-  output/mask_cache.npz
-  接入 orientation 半模板化：
-  orientation_templates.json
-  接入 lightweight scene graph 给最终推理用
-  接入最小对象集合裁剪：
-  默认只保留 picked object + 1~2 related objects
-  between / center / 模板命中差 这类复杂情况自动回退旧路径
+需要上传到服务器的文件：
+- `sofar/serve/system_prompts.py`
+- `sofar/serve/qwen_inference.py`
+- `sofar/serve/stage3_grounding.py`
+- `sofar/serve/stage4_point_data.py`
+- `sofar/spatialbench/eval_spatialbench.py`
+- `sofar/open6dor/open6dor_perception.py`
 
+建议上传到服务器对应目录：
+- `/data/coding/SoFar/serve`
+- `/data/coding/SoFar/spatialbench`
+- `/data/coding/SoFar/open6dor`
 
-下次上传服务器后做：
-cd /data/coding/SoFar
+上传后在服务器手动执行：
 
-spatialbench运行
-python spatialbench/eval_spatialbench.py --reset-progress --speed-profile conservative
+1. 进入项目目录
+`cd /data/coding/SoFar`
 
-open6dor运行
-python open6dor/open6dor_perception.py --pilot open6dor10 --reset-progress --speed-profile conservative
+2. 统一采用两层验证策略
+- 第一层：先跑 `10 case`，只看代码是否能 run、schema 是否稳定、cache 是否能生成
+- 第二层：`10 case` 稳定后，再跑 `50 case`，用来观察错误分布、字段稳定性和中等规模结果
+- 当前不再默认一上来跑 `100 case`
 
-最后汇总
-python scripts/stage1_collect_baseline.py --hard-case-limit 100
+3. 先做 Stage 2 parser smoke
+- SpatialBench 10 条：
+`python spatialbench/eval_spatialbench.py --stage2-parser-only --limit 10 --speed-profile conservative`
+- SpatialBench 50 条：
+`python spatialbench/eval_spatialbench.py --stage2-parser-only --limit 50 --speed-profile conservative`
+- Open6DOR 先跑 10 条：
+`python open6dor/open6dor_perception.py --stage2-parser-only --limit 10 --speed-profile conservative`
+- 如果 10 条稳定，再扩到 50 条：
+`python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`
+
+4. 再做 Stage 3 grounding smoke
+- SpatialBench 10 条：
+`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 10 --speed-profile conservative`
+- SpatialBench 50 条：
+`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 50 --speed-profile conservative`
+- Open6DOR 先跑 10 条：
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
+- 如果 10 条稳定，再扩到 50 条：
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 50 --speed-profile conservative`
+
+5. 最后做 Stage 4 point-data smoke（依赖 Stage 3 cache）
+- SpatialBench 10 条：
+`python spatialbench/eval_spatialbench.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
+- SpatialBench 50 条：
+`python spatialbench/eval_spatialbench.py --stage4-pointdata-only --limit 50 --speed-profile conservative`
+- Open6DOR 10 条：
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
+- 如果 10 条稳定，再扩到 50 条：
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 50 --speed-profile conservative`
+
+需要重点看：
+
+Stage 2 输出：
+- SpatialBench：
+  - `output/stage2_spatialbench_parser_records.json`
+  - `output/stage2_spatialbench_parser_records.csv`
+- Open6DOR：
+  - `output/stage2_open6dor_parser_records_open6dor10.json`
+  - `output/stage2_open6dor_parser_records_open6dor10.csv`
+
+Stage 3 输出：
+- SpatialBench：
+  - `output/stage3_spatialbench_grounding_records.json`
+  - `output/stage3_spatialbench_grounding_records.csv`
+  - `output/stage3_spatialbench_cache/<id>/object_part_cache.json`
+  - `output/stage3_spatialbench_cache/<id>/object_mask.npz`
+  - `output/stage3_spatialbench_cache/<id>/part_mask.npz`
+  - `output/stage3_spatialbench_cache/<id>/roi_meta.json`
+- Open6DOR：
+  - `output/stage3_open6dor_grounding_records_open6dor10.json`
+  - `output/stage3_open6dor_grounding_records_open6dor10.csv`
+  - `<task_dir>/output/stage3/object_part_cache.json`
+  - `<task_dir>/output/stage3/object_mask.npz`
+  - `<task_dir>/output/stage3/part_mask.npz`
+  - `<task_dir>/output/stage3/roi_meta.json`
+
+Stage 4 输出：
+- SpatialBench：
+  - `output/stage4_spatialbench_point_records.json`
+  - `output/stage4_spatialbench_point_records.csv`
+  - `output/stage4_spatialbench_point_cache/<id>/point_data_cache.json`
+  - `output/stage4_spatialbench_point_cache/<id>/object_points.npz`
+  - `output/stage4_spatialbench_point_cache/<id>/part_points.npz`
+- Open6DOR：
+  - `output/stage4_open6dor_point_records_open6dor10.json`
+  - `output/stage4_open6dor_point_records_open6dor10.csv`
+  - `<task_dir>/output/stage4/point_data_cache.json`
+  - `<task_dir>/output/stage4/object_points.npz`
+  - `<task_dir>/output/stage4/part_points.npz`
+
+需要人工检查的重点：
+
+Stage 2：
+- 主线 parser：
+  - `target_object`
+  - `functional_part`
+  - `relation`
+  - `reference_frame`
+- Fast Open6DOR parser：
+  - `picked_object`
+  - `related_objects`
+  - `orientation_mode`
+  - `relation`
+  - `reference_frame`
+  - `routing_hints`
+
+Stage 3：
+- object grounding 是否稳定找到目标对象
+- part grounding 失败时是否正确标记为 `partial`
+- `roi_meta.json` 是否和 bbox / mask 对得上
+- Open6DOR 中 picked object 是否确实重处理，reference object 是否保持轻处理
+
+Stage 4：
+- `object_points.npz` / `part_points.npz` 是否能正常打开
+- `point_data_cache.json` 中 geometry priors 是否有值
+- `part_ratio`、`object_centroid`、`part_centroid` 是否看起来合理
+
+本轮定位：
+- `PSCR` 是主创新
+- `Fast Open6DOR` 是辅助创新
+- Stage 3 的唯一主问题是：先找物体、再找部件是否有效
+- Stage 4 的唯一主问题是：能否构建稳定可训练的 object/part point data 表示
+- `task_config` 允许用于 fast path 的 routing / schema extraction
+- `directory / task id` 默认不允许作为主输入
