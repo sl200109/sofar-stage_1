@@ -1,82 +1,61 @@
 {
-  "updated_at": "2026-04-09T21:10:00",
+  "updated_at": "2026-04-10T17:10:00",
   "tasks": [
     {
       "id": "stage2_local_define_schema",
       "owner": "local",
       "status": "done",
       "title": "定义 Stage 2 parser 统一 schema",
-      "notes": "已明确主线 parser 的 target_object / functional_part / relation / reference_frame，以及 Fast Open6DOR 辅助字段 picked_object / related_objects / orientation_mode / routing_hints。"
+      "notes": "主线与 Fast Open6DOR 的结构化字段已经固定，后续 Stage 3 不应再改这些主字段语义。"
     },
     {
       "id": "stage2_local_prompt_design",
       "owner": "local",
       "status": "done",
       "title": "接入 Part-aware parser prompt 与 Fast Open6DOR parser prompt",
-      "notes": "已在 system_prompts.py 中补入两套 prompt，统一要求 JSON only 输出，并保持主线与 fast path 口径分开。"
+      "notes": "两套 prompt 已接入，且 Fast Open6DOR prompt 现已补强：当 task_config.target_obj_name 存在时，picked_object 必须与其一致。"
     },
     {
       "id": "stage2_local_postprocess_rules",
       "owner": "local",
       "status": "done",
       "title": "完成 parser JSON 清洗与归一化逻辑",
-      "notes": "已补入 relation / reference_frame / parser_confidence / direction_attributes 的归一化逻辑，并兼容旧字段。"
+      "notes": "已完成 relation/reference_frame/confidence 的归一化，并新增 Open6DOR picked_object 对 task_config.target_obj_name 的本地校正逻辑。"
     },
     {
-      "id": "stage2_local_boundary_note",
+      "id": "stage2_local_csv_fix",
       "owner": "local",
       "status": "done",
-      "title": "固化 Fast Open6DOR 信息边界",
-      "notes": "已明确 instruction 与 RGB-D/image 允许使用，task_config 仅用于 fast path routing/schema extraction，directory/task id 默认不作为主输入。"
-    },
-    {
-      "id": "stage2_local_manual_review_plan",
-      "owner": "local",
-      "status": "done",
-      "title": "准备人工抽检入口而不新增独立脚本",
-      "notes": "已在现有 spatialbench/open6dor 入口中加入 stage2 parser-only 模式，上传后可直接手动运行并导出 JSON/CSV 供人工抽检。"
-    },
-    {
-      "id": "stage2_server_upload_changes",
-      "owner": "server",
-      "status": "todo",
-      "title": "上传 Stage 2 parser 相关代码到服务器",
-      "notes": "本轮仅需上传 serve、spatialbench、open6dor 中的已修改文件，不需要额外部署新脚本。"
+      "title": "修复 Stage 2 CSV 导出只写表头的问题",
+      "notes": "已将 CSV 写出逻辑改为仅按 fieldnames 写入，避免 parser_output 等额外字段触发 DictWriter 报错。"
     },
     {
       "id": "stage2_server_spatialbench_parser_smoke",
       "owner": "server",
-      "status": "todo",
-      "title": "手动执行 SpatialBench parser smoke",
-      "notes": "先跑 20 条确认字段稳定，再扩到 100 条用于人工抽检；输出文件为 stage2_spatialbench_parser_records.json/csv。"
+      "status": "done",
+      "title": "完成 SpatialBench Stage 2 parser 50-case smoke",
+      "notes": "结果为 success=49、error=1；主线 parser 已基本可用。"
     },
     {
-      "id": "stage2_server_open6dor10_parser_smoke",
+      "id": "stage2_server_open6dor_parser_smoke",
       "owner": "server",
-      "status": "todo",
-      "title": "手动执行 open6dor10 fast parser smoke",
-      "notes": "先跑 10 条 smoke，再跑完整 open6dor10；重点检查 routing_hints、relation、reference_frame 是否稳定。"
+      "status": "done",
+      "title": "完成 Open6DOR Stage 2 parser 50-case 首轮 smoke",
+      "notes": "50/50 无运行时错误，records 与 CSV 已落盘；但语义检查发现约 26/50 样本存在 picked_object 与参考物体反转。"
     },
     {
-      "id": "stage2_server_batch_record",
+      "id": "stage2_server_open6dor_alignment_rerun",
       "owner": "server",
       "status": "todo",
-      "title": "记录 Stage 2 parser 结构化输出",
-      "notes": "需要保留成功样本、失败样本和典型错误案例，供 100 条人工抽检和 Stage 3 对接使用。"
-    },
-    {
-      "id": "stage2_server_manual_review_100",
-      "owner": "server",
-      "status": "todo",
-      "title": "完成 100 条 parser 结果人工抽检",
-      "notes": "人工检查 object / part / relation / reference_frame 四项；Fast Open6DOR 还需要额外检查 routing_hints 是否合理。"
+      "title": "重跑 Open6DOR Stage 2 以验证 picked_object 对齐修复",
+      "notes": "重新上传 system_prompts.py 与 qwen_inference.py 后，执行 `python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`。"
     },
     {
       "id": "stage2_closeout",
       "owner": "local",
-      "status": "todo",
-      "title": "汇总 Stage 2 结果并衔接 Stage 3",
-      "notes": "收口时需要明确 schema 是否稳定、100 条抽检正确率如何、哪些错误类型最常见，以及是否可以无缝进入 Stage 3。"
+      "status": "in_progress",
+      "title": "完成 Stage 2 收尾并衔接 Stage 3",
+      "notes": "SpatialBench 侧已满足收尾条件；待 Open6DOR 完成一次 target/reference 对齐修复后的短重跑且结果通过，Stage 2 即可正式结束。"
     }
   ]
 }

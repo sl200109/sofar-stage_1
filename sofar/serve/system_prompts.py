@@ -312,6 +312,7 @@ Required JSON keys:
 
 Guidelines:
 - picked_object must be the manipulation target.
+- If task_config.target_obj_name is provided, picked_object must match that target object exactly.
 - related_objects should be the minimal necessary reference objects, usually 0 to 2 objects.
 - orientation_mode should be a short task-aware label such as "upright", "lying_flat", "plug_right", "handle_right", or "".
 - relation should be a short normalized phrase such as "behind", "front", "left", "right", "between", "center", "none".

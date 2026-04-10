@@ -1,82 +1,40 @@
 {
-  "updated_at": "2026-04-09T23:05:00",
+  "updated_at": "2026-04-10T17:10:00",
   "tasks": [
     {
       "id": "stage4_local_cache_contract",
       "owner": "local",
       "status": "done",
       "title": "定义 Stage 4 点数据缓存格式",
-      "notes": "已明确输出 point_data_cache.json、object_points.npz、part_points.npz；缓存默认引用 Stage 3 object_part_cache.json。"
+      "notes": "point_data_cache.json、object_points.npz、part_points.npz 已固定。"
     },
     {
       "id": "stage4_local_point_builder",
       "owner": "local",
       "status": "done",
       "title": "接入 object/part point 构建与采样逻辑",
-      "notes": "已从 Stage 3 的 object_mask / part_mask 出发构建带颜色的 3D 点，并统一采样点数。"
-    },
-    {
-      "id": "stage4_local_geometry_priors",
-      "owner": "local",
-      "status": "done",
-      "title": "补入基础 geometry priors 计算",
-      "notes": "当前已导出 point count、part_ratio、object_centroid、part_centroid、part_to_object_vector，后续可在不破坏缓存格式前提下继续扩展。"
-    },
-    {
-      "id": "stage4_local_manual_entrypoints",
-      "owner": "local",
-      "status": "done",
-      "title": "在现有入口中补入 stage4-pointdata-only 模式",
-      "notes": "未新增独立脚本；后续服务器侧只需手动命令即可从 Stage 3 cache 构建 Stage 4 点数据。"
-    },
-    {
-      "id": "stage4_local_fast_hooks",
-      "owner": "local",
-      "status": "done",
-      "title": "为 Fast Open6DOR 保留 lightweight 字段挂点",
-      "notes": "当前 point_data_cache.json 中保留了可被 Fast Open6DOR 读取的几何先验摘要，但不在本地提前定死后续使用策略。"
-    },
-    {
-      "id": "stage4_server_upload_changes",
-      "owner": "server",
-      "status": "todo",
-      "title": "上传 Stage 4 相关代码到服务器",
-      "notes": "需要同步 serve/stage4_point_data.py、更新后的 spatialbench/eval_spatialbench.py、open6dor/open6dor_perception.py。"
-    },
-    {
-      "id": "stage4_server_stage3_prereq",
-      "owner": "server",
-      "status": "todo",
-      "title": "确认 Stage 3 cache 已可用",
-      "notes": "Stage 4 默认直接读取 Stage 3 cache；如果 object_part_cache 或 mask 文件不稳定，不能进入点数据构建。"
+      "notes": "Stage 4 构建逻辑已经可运行，现阶段主要依赖 Stage 3 cache 的正确性。"
     },
     {
       "id": "stage4_server_spatialbench_point_smoke",
       "owner": "server",
-      "status": "todo",
-      "title": "手动执行 SpatialBench Stage 4 point-data smoke",
-      "notes": "先跑 20 条，再扩到 100 条；重点检查 point_data_cache 与 npz 文件是否一一对应。"
+      "status": "in_progress",
+      "title": "等待新的 SpatialBench Stage 3 cache 后复核 Stage 4",
+      "notes": "当前 43 条失败均来自上游 Stage 3 cache 缺失；应在 Stage 3 单卡复核后再重跑。"
     },
     {
       "id": "stage4_server_open6dor_point_smoke",
       "owner": "server",
       "status": "todo",
-      "title": "手动执行 open6dor10 Stage 4 point-data smoke",
-      "notes": "依赖 open6dor10 的 Stage 3 cache；重点检查 object_points / part_points 与 geometry_priors 是否可读。"
-    },
-    {
-      "id": "stage4_server_cache_review",
-      "owner": "server",
-      "status": "todo",
-      "title": "抽检 Stage 4 点数据缓存",
-      "notes": "需要人工确认部分样本的 point count、part_ratio、centroid 含义是否合理，确保后续 Stage 5 能直接读入。"
+      "title": "在 Stage 2/3 修复后重跑 Open6DOR Stage 4 smoke",
+      "notes": "旧 Open6DOR Stage 4 point cache 仅可视为结构 smoke；待 Stage 2 picked_object 对齐修复后，需重新跑 Stage 3 再跑 Stage 4。"
     },
     {
       "id": "stage4_closeout",
       "owner": "local",
       "status": "todo",
-      "title": "汇总 Stage 4 smoke 结果并衔接 Stage 5",
-      "notes": "收口时需要明确点数据缓存是否稳定、geometry priors 是否足够支撑训练入口，以及是否还需要补充字段。"
+      "title": "汇总 Stage 4 点数据质量并衔接 Stage 5",
+      "notes": "需要先获得可信的 SpatialBench/Open6DOR point cache，才能开始把 Stage 4 作为 Stage 5 数据输入基础。"
     }
   ]
 }

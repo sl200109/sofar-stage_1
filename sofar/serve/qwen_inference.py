@@ -253,6 +253,27 @@ def _ensure_string_list(values):
     return result
 
 
+def _normalize_object_name_text(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("_", " ").strip())
+
+
+def _canonical_object_name(value):
+    return _normalize_object_name_text(value).lower()
+
+
+def _dedupe_object_names(values):
+    deduped = []
+    seen = set()
+    for value in values:
+        normalized = _normalize_object_name_text(value)
+        canonical = _canonical_object_name(normalized)
+        if not normalized or canonical in seen:
+            continue
+        deduped.append(normalized)
+        seen.add(canonical)
+    return deduped
+
+
 def _normalize_numeric_triplet(value):
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
@@ -398,20 +419,42 @@ def _normalize_stage2_fast_open6dor_parser_json(raw_info, instruction="", task_c
         raise ValueError(f"Unsupported Stage 2 fast parser schema: {raw_info}")
     task_config = task_config or {}
     info = dict(raw_info)
-    related_objects = _ensure_string_list(info.get("related_objects", []))
-    picked_object = str(
+    related_objects = _dedupe_object_names(_ensure_string_list(info.get("related_objects", [])))
+    model_picked_object = _normalize_object_name_text(
         info.get("picked_object")
         or info.get("target_object")
-        or task_config.get("target_obj_name")
         or ""
-    ).strip()
+    )
+    task_target_object = _normalize_object_name_text(task_config.get("target_obj_name", ""))
+    picked_object = task_target_object or model_picked_object
+    if task_target_object:
+        model_picked_canonical = _canonical_object_name(model_picked_object)
+        task_target_canonical = _canonical_object_name(task_target_object)
+        if model_picked_object and model_picked_canonical != task_target_canonical:
+            related_objects = [model_picked_object] + related_objects
+        related_objects = [
+            obj for obj in related_objects
+            if _canonical_object_name(obj) != task_target_canonical
+        ]
+    related_objects = _dedupe_object_names(related_objects)
     relation = _normalize_relation(info.get("relation") or _infer_relation_from_text(instruction))
     direction_attributes = _ensure_string_list(info.get("direction_attributes", []))
     orientation_mode = str(info.get("orientation_mode", "")).strip()
     routing_hints = info.get("routing_hints", {}) if isinstance(info.get("routing_hints"), dict) else {}
-    minimal_object_set = _ensure_string_list(routing_hints.get("minimal_object_set", []))
+    minimal_object_set = _dedupe_object_names(_ensure_string_list(routing_hints.get("minimal_object_set", [])))
     if not minimal_object_set:
         minimal_object_set = [picked_object] + related_objects
+    else:
+        minimal_object_set = [picked_object] + [
+            obj for obj in minimal_object_set
+            if _canonical_object_name(obj) != _canonical_object_name(picked_object)
+        ]
+        for related_object in related_objects:
+            if _canonical_object_name(related_object) not in {
+                _canonical_object_name(item) for item in minimal_object_set
+            }:
+                minimal_object_set.append(related_object)
+    minimal_object_set = _dedupe_object_names(minimal_object_set)
     normalized = {
         "picked_object": picked_object,
         "related_objects": related_objects,

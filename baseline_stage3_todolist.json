@@ -1,82 +1,40 @@
 {
-  "updated_at": "2026-04-09T23:05:00",
+  "updated_at": "2026-04-10T17:10:00",
   "tasks": [
     {
       "id": "stage3_local_interface_contract",
       "owner": "local",
       "status": "done",
       "title": "固化 Stage 2 到 Stage 3 的输入接口",
-      "notes": "已明确主线 parser 与 Fast Open6DOR parser 的稳定字段，允许内部 adapter 重构，但不改变 target_object / functional_part / relation / reference_frame 等主字段语义。"
+      "notes": "主线与 Fast Open6DOR 的输入字段已固定，但 Open6DOR 需要等 Stage 2 对齐修复后再作为正式上游。"
     },
     {
       "id": "stage3_local_dual_grounding_skeleton",
       "owner": "local",
       "status": "done",
       "title": "接入 Dual-stage Grounding 骨架",
-      "notes": "已在现有 spatialbench/open6dor 入口中补入 object grounding + part grounding 两段式流程；functional_part 为空时允许跳过 part grounding。"
-    },
-    {
-      "id": "stage3_local_object_part_cache",
-      "owner": "local",
-      "status": "done",
-      "title": "定义并落地 Stage 3 object/part cache",
-      "notes": "已统一导出 object_part_cache.json、object_mask.npz、part_mask.npz、roi_meta.json，供 Stage 4 直接读取。"
-    },
-    {
-      "id": "stage3_local_fast_hooks",
-      "owner": "local",
-      "status": "done",
-      "title": "为 Fast Open6DOR 接出非对称感知挂点",
-      "notes": "当前只对 picked object 做重点 grounding，reference object 默认轻处理；复杂策略与阈值留到服务器 smoke 之后再定。"
-    },
-    {
-      "id": "stage3_local_manual_entrypoints",
-      "owner": "local",
-      "status": "done",
-      "title": "在现有入口中补入 stage3-grounding-only 模式",
-      "notes": "未新增独立脚本；上传后可直接通过命令行手动执行 SpatialBench 与 Open6DOR 的 Stage 3 smoke。"
-    },
-    {
-      "id": "stage3_server_upload_changes",
-      "owner": "server",
-      "status": "todo",
-      "title": "上传 Stage 3 相关代码到服务器",
-      "notes": "需要同步 serve/stage3_grounding.py、更新后的 spatialbench/eval_spatialbench.py、open6dor/open6dor_perception.py，以及 Stage 2 依赖文件。"
-    },
-    {
-      "id": "stage3_server_parser_prereq",
-      "owner": "server",
-      "status": "todo",
-      "title": "先完成 Stage 2 parser smoke 作为 Stage 3 前置条件",
-      "notes": "Stage 3 默认消费 Stage 2 parser 输出；若 parser schema 不稳定，不能直接做 grounding 结论。"
+      "notes": "object grounding + part grounding 两段式流程已接入，缓存格式已固定。"
     },
     {
       "id": "stage3_server_spatialbench_grounding_smoke",
       "owner": "server",
-      "status": "todo",
-      "title": "手动执行 SpatialBench Stage 3 grounding smoke",
-      "notes": "先跑 20 条，再扩到 100 条；重点检查 object-stage / part-stage failure 标签是否稳定。"
+      "status": "in_progress",
+      "title": "在单独占卡条件下复核 SpatialBench Stage 3 smoke",
+      "notes": "此前 50-case 结果受到并发运行干扰，OOM 不能直接视为 Stage 3 自身缺陷，需要单独占卡复核。"
     },
     {
       "id": "stage3_server_open6dor_grounding_smoke",
       "owner": "server",
       "status": "todo",
-      "title": "手动执行 open6dor10 Stage 3 grounding smoke",
-      "notes": "先跑 5 条，再跑完整 open6dor10；重点检查 picked object 重点处理、reference object 轻处理是否满足设计预期。"
-    },
-    {
-      "id": "stage3_server_cache_review",
-      "owner": "server",
-      "status": "todo",
-      "title": "抽检 Stage 3 cache 与 ROI 元信息",
-      "notes": "需要人工确认 object bbox、part bbox、mask 文件和 roi_meta.json 字段是否一致，确保 Stage 4 可直接读取。"
+      "title": "在 Stage 2 修复后重跑 Open6DOR Stage 3 smoke",
+      "notes": "旧 Open6DOR Stage 3 结果建立在错误的 picked_object 上，只能算临时 smoke；待 Stage 2 对齐修复后重新跑 10 -> 50。"
     },
     {
       "id": "stage3_closeout",
       "owner": "local",
       "status": "todo",
-      "title": "汇总 Stage 3 smoke 结果并决定是否进入 Stage 4 收口",
-      "notes": "收口时要明确 object grounding 与 part grounding 的失败模式、cache 字段稳定性，以及 Fast Open6DOR 挂点是否足够清晰。"
+      "title": "汇总 Stage 3 稳定性并衔接 Stage 4",
+      "notes": "需要先完成单卡 SpatialBench 复核与 Open6DOR 重跑，才能对 Stage 3 作正式判断。"
     }
   ]
 }

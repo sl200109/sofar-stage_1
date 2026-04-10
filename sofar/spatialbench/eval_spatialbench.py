@@ -252,7 +252,7 @@ def write_csv_records(csv_path, records, fieldnames):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in records:
-            writer.writerow(row)
+            writer.writerow({field: row.get(field) for field in fieldnames})
 
 
 def run_stage2_parser_only(args, run_id, stage2_parse_fn):

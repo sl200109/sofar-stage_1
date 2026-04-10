@@ -831,7 +831,7 @@ def write_csv_records(csv_path, records, fieldnames):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in records:
-            writer.writerow(row)
+            writer.writerow({field: row.get(field) for field in fieldnames})
 
 
 def run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context):
