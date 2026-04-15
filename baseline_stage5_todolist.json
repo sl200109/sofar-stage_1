@@ -1,47 +1,82 @@
 {
-  "updated_at": "2026-04-15T22:10:00",
+  "updated_at": "2026-04-15T23:20:00",
   "tasks": [
     {
       "id": "stage5_local_manifest_builder",
       "owner": "local",
       "status": "done",
-      "title": "统一整理 Stage 4 smoke manifest",
-      "notes": "本地与云服务器的 manifest/dry-run 已跑通。"
+      "title": "统一整理 Stage 4 manifest",
+      "notes": "manifest/dry-run 已在本地和云服务器跑通。"
     },
     {
       "id": "stage5_training_label_definition",
       "owner": "local",
       "status": "done",
-      "title": "定义 Stage 5 pilot 训练标签",
-      "notes": "已定义 primary/fallback label 规则，并引入 train_label_confidence。"
+      "title": "定义 Stage 5 训练标签与 loss",
+      "notes": "已固定 primary/fallback label、train_label_confidence，以及 0.7*cosine + 0.3*smooth_l1 的加权方向 loss。"
     },
     {
       "id": "stage5_training_entry_ready",
       "owner": "local",
       "status": "done",
-      "title": "完成 Stage 5 首轮训练入口",
-      "notes": "stage5_train_pilot.py 已写好，但暂不建议在只有 10-case cache 时直接开训。"
+      "title": "完成 Stage 5 训练与未见样本测试入口",
+      "notes": "stage5_train_pilot.py 与 stage5_eval_unseen.py 已准备好，并通过本地语法检查。"
     },
     {
       "id": "stage5_expand_open6dor_stage4_cache",
       "owner": "server",
-      "status": "todo",
-      "title": "扩充 Open6DOR Stage 4 cache 到更大规模",
-      "notes": "下一步优先扩到 100-case，再判断是否继续扩大。Open6DOR 的 Stage 3/4 已改成默认增量补跑，不再重复执行已有有效 cache 的 case。"
+      "status": "done",
+      "title": "扩充 Open6DOR Stage 4 cache 到 100-case",
+      "notes": "当前 100/100 success，可直接作为第一轮训练数据源。"
     },
     {
       "id": "stage5_expand_spatialbench_stage4_cache",
       "owner": "server",
-      "status": "todo",
-      "title": "扩充 SpatialBench Stage 4 cache 到更大规模",
-      "notes": "建议先扩到 100-case，后续视情况扩到全量 223。"
+      "status": "done",
+      "title": "扩充 SpatialBench Stage 4 cache 到 100-case",
+      "notes": "当前 97/100 success，3 条因缺失上游 Stage 3 cache 失败；先用 97 条成功样本进入训练。"
     },
     {
-      "id": "stage5_train_pilot_after_cache_expand",
+      "id": "stage5_train_open6dor_pilot",
       "owner": "server",
       "status": "todo",
-      "title": "在扩量后的 cache 上执行正式 tiny-train pilot",
-      "notes": "只有在 Stage 4 cache 扩量完成后才启动 stage5_train_pilot.py。"
+      "title": "执行 Open6DOR-only tiny-train pilot",
+      "notes": "建议第一轮先做 Open6DOR-only，验证 orientation_mode 较明确时的收敛情况。"
+    },
+    {
+      "id": "stage5_eval_open6dor_unseen",
+      "owner": "server",
+      "status": "todo",
+      "title": "在未训练过的 Open6DOR test split 上测试",
+      "notes": "使用 stage5_eval_unseen.py 和 best checkpoint，在 test split 上记录 weighted_loss / mean_cosine / mean_angle_deg。"
+    },
+    {
+      "id": "stage5_train_spatialbench_pilot",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 SpatialBench-only tiny-train pilot",
+      "notes": "第二轮单独看 SpatialBench 的 functional_part / relation 多样性下是否仍稳定。"
+    },
+    {
+      "id": "stage5_eval_spatialbench_unseen",
+      "owner": "server",
+      "status": "todo",
+      "title": "在未训练过的 SpatialBench test split 上测试",
+      "notes": "使用 stage5_eval_unseen.py 在 SpatialBench test split 上记录方向指标。"
+    },
+    {
+      "id": "stage5_train_combined_pilot",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 Combined tiny-train pilot",
+      "notes": "在 Open6DOR-only 与 SpatialBench-only 都跑过后，再做 combined 训练。"
+    },
+    {
+      "id": "stage5_eval_combined_unseen",
+      "owner": "server",
+      "status": "todo",
+      "title": "在 combined 未训练样本上测试",
+      "notes": "对 combined 模型分别看 Open6DOR/SpatialBench 的 test split 表现。"
     }
   ]
 }

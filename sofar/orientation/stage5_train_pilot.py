@@ -108,13 +108,16 @@ def _prepare_train_val_manifests(summary: dict, dataset_mode: str, output_dir: P
     manifests = _choose_manifests(summary, dataset_mode)
     train_entries = []
     val_entries = []
+    test_entries = []
 
     for dataset_name, manifest_path in manifests:
         entries = _load_manifest_entries(manifest_path)
         train_part = [item for item in entries if item.get("split", "train") == "train"]
         val_part = [item for item in entries if item.get("split", "train") == "val"]
+        test_part = [item for item in entries if item.get("split", "train") == "test"]
         train_entries.extend(train_part)
         val_entries.extend(val_part)
+        test_entries.extend(test_part)
 
     if not val_entries and len(train_entries) > 1:
         val_entries = train_entries[-1:]
@@ -122,12 +125,15 @@ def _prepare_train_val_manifests(summary: dict, dataset_mode: str, output_dir: P
 
     train_entries = train_entries[:max_train]
     val_entries = val_entries[:max_val]
+    test_entries = test_entries[:max_val]
 
     train_manifest = output_dir / "stage5_train_manifest.jsonl"
     val_manifest = output_dir / "stage5_val_manifest.jsonl"
+    test_manifest = output_dir / "stage5_test_manifest.jsonl"
     _write_jsonl(train_manifest, train_entries)
     _write_jsonl(val_manifest, val_entries)
-    return train_manifest, val_manifest, train_entries, val_entries
+    _write_jsonl(test_manifest, test_entries)
+    return train_manifest, val_manifest, test_manifest, train_entries, val_entries, test_entries
 
 
 def _build_dataset(manifest_path: Path, subset: str, num_points: int, max_samples: int):
@@ -140,9 +146,25 @@ def _build_dataset(manifest_path: Path, subset: str, num_points: int, max_sample
     return Stage4PointCacheDataset(config)
 
 
+def _compute_weighted_direction_loss(pred_direction, target_direction, label_confidence):
+    pred_direction = torch.nn.functional.normalize(pred_direction, dim=-1)
+    target_direction = torch.nn.functional.normalize(target_direction, dim=-1)
+    cosine = torch.nn.functional.cosine_similarity(pred_direction, target_direction, dim=-1)
+    cosine_loss = (1 - cosine)
+    l1_loss = torch.nn.functional.smooth_l1_loss(
+        pred_direction,
+        target_direction,
+        reduction="none",
+    ).mean(dim=-1)
+    combined = 0.7 * cosine_loss + 0.3 * l1_loss
+    weighted = combined * label_confidence
+    return weighted.mean(), cosine
+
+
 def _evaluate(model, dataloader, device):
     model.eval()
     losses = []
+    cosine_scores = []
     with torch.no_grad():
         for batch in dataloader:
             points = batch["points"].to(device)
@@ -150,10 +172,17 @@ def _evaluate(model, dataloader, device):
             target_direction = batch["target_direction"].to(device)
             label_confidence = batch["label_confidence"].to(device).squeeze(-1)
             pred_direction = model(points, batch["instruction"], priors)
-            cosine = torch.nn.functional.cosine_similarity(pred_direction, target_direction, dim=-1)
-            loss = ((1 - cosine) * label_confidence).mean()
+            loss, cosine = _compute_weighted_direction_loss(
+                pred_direction,
+                target_direction,
+                label_confidence,
+            )
             losses.append(float(loss.item()))
-    return round(float(np.mean(losses)) if losses else 0.0, 6)
+            cosine_scores.extend([float(x) for x in cosine.detach().cpu().tolist()])
+    return {
+        "loss": round(float(np.mean(losses)) if losses else 0.0, 6),
+        "mean_cosine": round(float(np.mean(cosine_scores)) if cosine_scores else 0.0, 6),
+    }
 
 
 def main():
@@ -165,7 +194,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summaries = build_stage5_smoke_manifests(repo_root=repo_root, output_dir=output_dir)
-    train_manifest, val_manifest, train_entries, val_entries = _prepare_train_val_manifests(
+    train_manifest, val_manifest, test_manifest, train_entries, val_entries, test_entries = _prepare_train_val_manifests(
         summaries,
         args.dataset_mode,
         output_dir,
@@ -228,8 +257,13 @@ def main():
             train_losses.append(float(loss.item()))
 
         train_loss = round(float(np.mean(train_losses)), 6) if train_losses else 0.0
-        val_loss = _evaluate(model, val_loader, device) if val_loader is not None else None
-        epoch_log = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss}
+        val_metrics = _evaluate(model, val_loader, device) if val_loader is not None else None
+        epoch_log = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": None if val_metrics is None else val_metrics["loss"],
+            "val_mean_cosine": None if val_metrics is None else val_metrics["mean_cosine"],
+        }
         epoch_logs.append(epoch_log)
 
         ckpt_payload = {
@@ -237,15 +271,37 @@ def main():
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "epoch_log": epoch_log,
+            "model_config": {
+                "point_dim": model_config.point_dim,
+                "prior_dim": model_config.prior_dim,
+                "hidden_dim": model_config.hidden_dim,
+                "text_dim": model_config.text_dim,
+                "vocab_size": model_config.vocab_size,
+                "max_tokens": model_config.max_tokens,
+            },
         }
         torch.save(ckpt_payload, last_ckpt_path)
-        if val_loss is not None:
-            if best_val_loss is None or val_loss < best_val_loss:
-                best_val_loss = val_loss
+        if val_metrics is not None:
+            if best_val_loss is None or val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
                 torch.save(ckpt_payload, best_ckpt_path)
         elif best_val_loss is None:
             best_val_loss = train_loss
             torch.save(ckpt_payload, best_ckpt_path)
+
+    if best_ckpt_path.exists():
+        best_payload = torch.load(best_ckpt_path, map_location=device)
+        model.load_state_dict(best_payload["model"])
+
+    test_dataset = _build_dataset(test_manifest, "all", args.num_points, args.max_val_samples)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=min(args.batch_size, max(1, len(test_dataset))) if len(test_dataset) > 0 else 1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=stage5_collate_fn,
+    ) if len(test_dataset) > 0 else None
+    test_metrics = _evaluate(model, test_loader, device) if test_loader is not None else None
 
     summary = {
         "dataset_mode": args.dataset_mode,
@@ -255,17 +311,24 @@ def main():
         "batch_size": min(args.batch_size, max(1, len(train_dataset))),
         "train_size": len(train_dataset),
         "val_size": len(val_dataset),
+        "test_size": len(test_dataset),
         "train_manifest": str(train_manifest),
         "val_manifest": str(val_manifest),
+        "test_manifest": str(test_manifest),
         "best_checkpoint": str(best_ckpt_path),
         "last_checkpoint": str(last_ckpt_path),
         "best_val_loss": best_val_loss,
+        "final_test_metrics": test_metrics,
         "epoch_logs": epoch_logs,
         "label_definition": {
             "primary": "normalized geometry_priors.part_to_object_vector",
             "fallback_open6dor": "orientation_mode template axis",
             "fallback_default": "[0, 0, 1]",
             "label_weight": "train_label_confidence",
+        },
+        "loss_definition": {
+            "type": "0.7 * weighted_cosine + 0.3 * weighted_smooth_l1",
+            "weight_source": "train_label_confidence",
         },
     }
 

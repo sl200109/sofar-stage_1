@@ -67,7 +67,7 @@ class Stage4PointCacheDataset(data.Dataset):
         self.max_samples = getattr(config, "MAX_SAMPLES", None)
 
         entries = _load_jsonl(self.manifest_path)
-        if self.subset in {"train", "val"}:
+        if self.subset in {"train", "val", "test"}:
             entries = [item for item in entries if item.get("split", "train") == self.subset]
         if self.max_samples is not None:
             entries = entries[: int(self.max_samples)]

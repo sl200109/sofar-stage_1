@@ -11,7 +11,12 @@ SERVER_ROOT = "/data/coding/SoFar"
 
 def _stable_split(sample_key: str) -> str:
     digest = hashlib.md5(sample_key.encode("utf-8")).hexdigest()
-    return "val" if int(digest[:2], 16) < 51 else "train"
+    bucket = int(digest[:2], 16)
+    if bucket < 26:
+        return "test"
+    if bucket < 52:
+        return "val"
+    return "train"
 
 
 def _normalize_vector(vector: Optional[Iterable[float]]) -> Tuple[List[float], str]:
