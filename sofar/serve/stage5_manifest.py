@@ -28,6 +28,41 @@ def _normalize_vector(vector: Optional[Iterable[float]]) -> Tuple[List[float], s
     return [round(float(v), 6) for v in arr], "geometry_priors.part_to_object_vector"
 
 
+def _normalize_named_axis(vector: Iterable[float], source: str, confidence: float) -> Tuple[List[float], str, float]:
+    normalized, _ = _normalize_vector(vector)
+    return normalized, source, confidence
+
+
+def _resolve_pilot_label(
+    dataset: str,
+    cache_payload: Dict[str, Any],
+) -> Tuple[List[float], str, float]:
+    geometry = cache_payload.get("geometry_priors", {}) or {}
+    parser_output = cache_payload.get("parser_output", {}) or {}
+
+    vector = geometry.get("part_to_object_vector")
+    if vector is not None and float(np.linalg.norm(np.array(vector, dtype=np.float32))) > 1e-6:
+        normalized, source = _normalize_vector(vector)
+        return normalized, source, 1.0
+
+    if dataset == "open6dor":
+        orientation_mode = str(parser_output.get("orientation_mode", "") or "").strip().lower()
+        orientation_templates = {
+            "upright": ([0.0, 0.0, 1.0], "orientation_mode.upright", 0.75),
+            "upside_down": ([0.0, 0.0, -1.0], "orientation_mode.upside_down", 0.75),
+            "lying_flat": ([1.0, 0.0, 0.0], "orientation_mode.lying_flat", 0.65),
+            "lying_sideways": ([0.0, 1.0, 0.0], "orientation_mode.lying_sideways", 0.65),
+            "clip_sideways": ([0.0, 1.0, 0.0], "orientation_mode.clip_sideways", 0.65),
+            "plug_right": ([1.0, 0.0, 0.0], "orientation_mode.plug_right", 0.7),
+            "handle_right": ([1.0, 0.0, 0.0], "orientation_mode.handle_right", 0.7),
+        }
+        if orientation_mode in orientation_templates:
+            axis, source, confidence = orientation_templates[orientation_mode]
+            return _normalize_named_axis(axis, source, confidence)
+
+    return _normalize_named_axis([0.0, 0.0, 1.0], "fallback_default_axis", 0.2)
+
+
 def _map_server_path_to_local(path_value: str, repo_root: Path) -> Path:
     path_value = str(path_value).replace("\\", "/")
     if path_value.startswith(SERVER_ROOT + "/"):
@@ -107,6 +142,86 @@ def _load_records(records_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def _latest_existing_record(repo_root: Path, dataset: str) -> Optional[Path]:
+    repo_root = Path(repo_root)
+    filename = f"stage4_{dataset}_point_records.json"
+    direct = repo_root / filename
+    if direct.exists():
+        return direct
+
+    output_dir = repo_root / "output"
+    output_copy = output_dir / filename
+    if output_copy.exists():
+        return output_copy
+
+    candidates = sorted(output_dir.glob(f"stage4_{dataset}_point_records_*.json"))
+    if candidates:
+        return candidates[-1]
+    return None
+
+
+def _guess_cache_dir(repo_root: Path, dataset: str) -> Path:
+    repo_root = Path(repo_root)
+    if dataset == "spatialbench":
+        return repo_root / "output" / "stage4_spatialbench_point_cache"
+    return repo_root / "datasets" / "open6dor_v2"
+
+
+def _scan_stage4_cache_entries(repo_root: Path, dataset: str) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    cache_root = _guess_cache_dir(repo_root, dataset)
+    if not cache_root.exists():
+        return entries
+
+    for cache_path in cache_root.rglob("point_data_cache.json"):
+        if dataset == "open6dor" and "output" not in {part.lower() for part in cache_path.parts}:
+            continue
+
+        object_points_path = cache_path.with_name("object_points.npz")
+        part_points_path = cache_path.with_name("part_points.npz")
+        if not object_points_path.exists():
+            continue
+
+        try:
+            with cache_path.open("r", encoding="utf-8") as f:
+                cache_payload = json.load(f)
+        except Exception:
+            continue
+
+        grounding = cache_payload.get("grounding", {}) or {}
+        geometry = cache_payload.get("geometry_priors", {}) or {}
+        parser_output = cache_payload.get("parser_output", {}) or {}
+
+        if dataset == "spatialbench":
+            sample_key = str(cache_payload.get("sample_id", cache_path.parent.name))
+            entry = {
+                "id": sample_key,
+                "status": grounding.get("status", "success"),
+                "cache_path": str(cache_path),
+                "object_points_path": str(object_points_path),
+                "part_points_path": str(part_points_path) if part_points_path.exists() else None,
+                "object_point_count": geometry.get("object_point_count"),
+                "part_point_count": geometry.get("part_point_count"),
+                "part_ratio": geometry.get("part_ratio"),
+            }
+        else:
+            task_dir = str(cache_path.parent.parent)
+            entry = {
+                "task_dir": task_dir,
+                "status": grounding.get("status", "success"),
+                "cache_path": str(cache_path),
+                "object_points_path": str(object_points_path),
+                "part_points_path": str(part_points_path) if part_points_path.exists() else None,
+                "object_point_count": geometry.get("object_point_count"),
+                "part_point_count": geometry.get("part_point_count"),
+                "part_ratio": geometry.get("part_ratio"),
+                "orientation_mode": parser_output.get("orientation_mode", ""),
+            }
+        entries.append(entry)
+
+    return entries
+
+
 def build_stage5_manifest_from_stage4_records(
     records_path: Path,
     repo_root: Path,
@@ -154,6 +269,10 @@ def build_stage5_manifest_from_stage4_records(
         target_direction, target_source = _normalize_vector(
             (cache_payload.get("geometry_priors", {}) or {}).get("part_to_object_vector")
         )
+        train_target_direction, train_target_source, train_label_confidence = _resolve_pilot_label(
+            dataset,
+            cache_payload,
+        )
 
         entry = {
             "dataset": dataset,
@@ -165,6 +284,9 @@ def build_stage5_manifest_from_stage4_records(
             "instruction": _build_instruction(dataset, cache_payload),
             "target_direction": target_direction,
             "target_direction_source": target_source,
+            "train_target_direction": train_target_direction,
+            "train_target_direction_source": train_target_source,
+            "train_label_confidence": round(float(train_label_confidence), 4),
             "prior_vector": _build_prior_vector(cache_payload),
             "parser_output": cache_payload.get("parser_output", {}) or {},
             "grounding": cache_payload.get("grounding", {}) or {},
@@ -188,6 +310,30 @@ def build_stage5_manifest_from_stage4_records(
     return summary
 
 
+def build_stage5_manifest_from_cache_scan(
+    repo_root: Path,
+    dataset: str,
+    manifest_path: Path,
+) -> Dict[str, Any]:
+    repo_root = Path(repo_root)
+    manifest_path = Path(manifest_path)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    records = _scan_stage4_cache_entries(repo_root, dataset)
+    payload = {"dataset": dataset, "records": records}
+    temp_records = manifest_path.with_suffix(".records.tmp.json")
+    with temp_records.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    summary = build_stage5_manifest_from_stage4_records(temp_records, repo_root, manifest_path)
+    summary["records_path"] = f"cache_scan:{_guess_cache_dir(repo_root, dataset)}"
+    try:
+        temp_records.unlink()
+    except OSError:
+        pass
+    return summary
+
+
 def build_stage5_smoke_manifests(
     repo_root: Path,
     spatial_records_path: Optional[Path] = None,
@@ -198,45 +344,35 @@ def build_stage5_smoke_manifests(
     output_dir = Path(output_dir or (repo_root / "output"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    spatial_records_path = Path(spatial_records_path or (repo_root / "stage4_spatialbench_point_records.json"))
-    open6dor_records_path = Path(open6dor_records_path or (repo_root / "stage4_open6dor_point_records.json"))
+    spatial_records_path = Path(spatial_records_path) if spatial_records_path else _latest_existing_record(repo_root, "spatialbench")
+    open6dor_records_path = Path(open6dor_records_path) if open6dor_records_path else _latest_existing_record(repo_root, "open6dor")
 
     summaries = {}
-    if spatial_records_path.exists():
+    if spatial_records_path and spatial_records_path.exists():
         summaries["spatialbench"] = build_stage5_manifest_from_stage4_records(
             spatial_records_path,
             repo_root,
             output_dir / "stage5_manifest_spatialbench_smoke.jsonl",
         )
     else:
-        summaries["spatialbench"] = {
-            "dataset": "spatialbench",
-            "records_path": str(spatial_records_path),
-            "manifest_path": str(output_dir / "stage5_manifest_spatialbench_smoke.jsonl"),
-            "total_records": 0,
-            "available_entries": 0,
-            "skipped_missing_cache": 0,
-            "skipped_bad_status": 0,
-            "missing_records": True,
-        }
+        summaries["spatialbench"] = build_stage5_manifest_from_cache_scan(
+            repo_root,
+            "spatialbench",
+            output_dir / "stage5_manifest_spatialbench_smoke.jsonl",
+        )
 
-    if open6dor_records_path.exists():
+    if open6dor_records_path and open6dor_records_path.exists():
         summaries["open6dor"] = build_stage5_manifest_from_stage4_records(
             open6dor_records_path,
             repo_root,
             output_dir / "stage5_manifest_open6dor_smoke.jsonl",
         )
     else:
-        summaries["open6dor"] = {
-            "dataset": "open6dor",
-            "records_path": str(open6dor_records_path),
-            "manifest_path": str(output_dir / "stage5_manifest_open6dor_smoke.jsonl"),
-            "total_records": 0,
-            "available_entries": 0,
-            "skipped_missing_cache": 0,
-            "skipped_bad_status": 0,
-            "missing_records": True,
-        }
+        summaries["open6dor"] = build_stage5_manifest_from_cache_scan(
+            repo_root,
+            "open6dor",
+            output_dir / "stage5_manifest_open6dor_smoke.jsonl",
+        )
 
     summary_path = output_dir / "stage5_manifest_summary.json"
     with summary_path.open("w", encoding="utf-8") as f:

@@ -52,6 +52,7 @@ def stage5_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "points": torch.stack([item["points"] for item in batch], dim=0),
         "target_direction": torch.stack([item["target_direction"] for item in batch], dim=0),
+        "label_confidence": torch.stack([item["label_confidence"] for item in batch], dim=0),
         "prior_vector": torch.stack([item["prior_vector"] for item in batch], dim=0),
         "instruction": [item["instruction"] for item in batch],
         "meta": [item["meta"] for item in batch],
@@ -84,18 +85,23 @@ class Stage4PointCacheDataset(data.Dataset):
             part_points = np.load(part_points_path)["points"].astype(np.float32)
 
         points = _compose_points(object_points, part_points, self.num_points)
-        target_direction = np.asarray(entry.get("target_direction", [0.0, 0.0, 1.0]), dtype=np.float32)
+        target_direction = np.asarray(
+            entry.get("train_target_direction", entry.get("target_direction", [0.0, 0.0, 1.0])),
+            dtype=np.float32,
+        )
         prior_vector = np.asarray(entry.get("prior_vector", [0.0] * 8), dtype=np.float32)
+        label_confidence = np.asarray([entry.get("train_label_confidence", 1.0)], dtype=np.float32)
 
         return {
             "points": torch.from_numpy(points).float(),
             "target_direction": torch.from_numpy(target_direction).float(),
+            "label_confidence": torch.from_numpy(label_confidence).float(),
             "prior_vector": torch.from_numpy(prior_vector).float(),
             "instruction": str(entry.get("instruction", "")),
             "meta": {
                 "dataset": entry.get("dataset"),
                 "sample_key": entry.get("sample_key"),
-                "target_direction_source": entry.get("target_direction_source"),
+                "target_direction_source": entry.get("train_target_direction_source", entry.get("target_direction_source")),
                 "point_cache_path": entry.get("point_cache_path"),
             },
         }

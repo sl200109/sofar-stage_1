@@ -302,6 +302,64 @@ def should_skip_existing_result(task_dir, rerun_existing=False):
     return os.path.exists(result_path)
 
 
+def _stage_cache_force_rerun():
+    return os.getenv("SOFAR_OPEN6DOR_FORCE_STAGE_RERUN", "").strip() == "1"
+
+
+def _load_json_if_exists(path):
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def has_completed_stage3_cache(task_dir):
+    if _stage_cache_force_rerun():
+        return False
+    stage3_dir = Path(task_dir) / "output" / "stage3"
+    cache_json = stage3_dir / "object_part_cache.json"
+    object_mask_path = stage3_dir / "object_mask.npz"
+    cache_payload = _load_json_if_exists(cache_json)
+    if cache_payload is None or not object_mask_path.exists():
+        return False
+    grounding = cache_payload.get("grounding", {})
+    return grounding.get("status") in {"success", "partial"}
+
+
+def has_completed_stage4_cache(task_dir):
+    if _stage_cache_force_rerun():
+        return False
+    stage4_dir = Path(task_dir) / "output" / "stage4"
+    cache_json = stage4_dir / "point_data_cache.json"
+    object_points_path = stage4_dir / "object_points.npz"
+    cache_payload = _load_json_if_exists(cache_json)
+    if cache_payload is None or not object_points_path.exists():
+        return False
+    return True
+
+
+def filter_pending_stage_cache_tasks(dataset_paths, stage_name):
+    if stage_name == "stage3":
+        checker = has_completed_stage3_cache
+    elif stage_name == "stage4":
+        checker = has_completed_stage4_cache
+    else:
+        raise ValueError(f"Unsupported stage cache filter: {stage_name}")
+
+    pending = []
+    skipped = 0
+    for task_dir in dataset_paths:
+        if checker(task_dir):
+            skipped += 1
+            continue
+        pending.append(task_dir)
+    return pending, skipped
+
+
 def discover_task_dirs(dataset_root):
     config_files = sorted(Path(dataset_root).rglob("task_config_new5.json"))
     task_dirs = []
@@ -1480,15 +1538,21 @@ if __name__ == "__main__":
         )
         print(f"[open6dor] save_debug_artifacts={RUN_OPTIONS['save_debug_artifacts']}")
         print(f"[open6dor] prefer_single_mask={RUN_OPTIONS['prefer_single_mask']}")
+        dataset_paths, skipped_count = filter_pending_stage_cache_tasks(dataset_paths, "stage3")
+        if skipped_count:
+            print(f"[open6dor] skipped {skipped_count} tasks with existing Stage 3 cache")
         if args.limit is not None:
             dataset_paths = dataset_paths[: args.limit]
-            print(f"[open6dor] applying --limit {args.limit}, stage3 grounding reduced to {len(dataset_paths)} tasks")
+            print(f"[open6dor] applying --limit {args.limit}, stage3 grounding reduced to {len(dataset_paths)} pending tasks")
         run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context)
         raise SystemExit(0)
     if args.stage4_pointdata_only:
+        dataset_paths, skipped_count = filter_pending_stage_cache_tasks(dataset_paths, "stage4")
+        if skipped_count:
+            print(f"[open6dor] skipped {skipped_count} tasks with existing Stage 4 cache")
         if args.limit is not None:
             dataset_paths = dataset_paths[: args.limit]
-            print(f"[open6dor] applying --limit {args.limit}, stage4 point-data reduced to {len(dataset_paths)} tasks")
+            print(f"[open6dor] applying --limit {args.limit}, stage4 point-data reduced to {len(dataset_paths)} pending tasks")
         run_stage4_pointdata_only(dataset_paths, output_dir, run_id, run_context)
         raise SystemExit(0)
 

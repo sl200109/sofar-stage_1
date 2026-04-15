@@ -1,47 +1,47 @@
 {
-  "updated_at": "2026-04-15T21:10:00",
+  "updated_at": "2026-04-15T22:10:00",
   "tasks": [
     {
       "id": "stage5_local_manifest_builder",
       "owner": "local",
       "status": "done",
       "title": "统一整理 Stage 4 smoke manifest",
-      "notes": "已生成 SpatialBench / Open6DOR smoke manifest 及 summary；本地当前只有 SpatialBench 10 条可直接读取。"
+      "notes": "本地与云服务器的 manifest/dry-run 已跑通。"
     },
     {
-      "id": "stage5_local_dataset_reader_check",
+      "id": "stage5_training_label_definition",
       "owner": "local",
       "status": "done",
-      "title": "完成 Stage 5 Dataset/DataLoader",
-      "notes": "已新增 manifest 驱动的 Stage4PointCacheDataset，并支持 points / prior_vector / instruction / target_direction 批处理。"
+      "title": "定义 Stage 5 pilot 训练标签",
+      "notes": "已定义 primary/fallback label 规则，并引入 train_label_confidence。"
     },
     {
-      "id": "stage5_local_training_entry",
+      "id": "stage5_training_entry_ready",
       "owner": "local",
       "status": "done",
-      "title": "接入 Part-conditioned Orientation Head 最小 dry-run 入口",
-      "notes": "已新增 PartConditionedOrientationHead 与 stage5_dry_run.py。"
+      "title": "完成 Stage 5 首轮训练入口",
+      "notes": "stage5_train_pilot.py 已写好，但暂不建议在只有 10-case cache 时直接开训。"
     },
     {
-      "id": "stage5_local_dryrun_smoke",
-      "owner": "local",
-      "status": "done",
-      "title": "完成本地最小 dry-run",
-      "notes": "本地 CPU dry-run 已跑通：dataset_size=4, batch_size=2, num_points=1024, loss=0.470613。"
-    },
-    {
-      "id": "stage5_server_dryrun",
+      "id": "stage5_expand_open6dor_stage4_cache",
       "owner": "server",
       "status": "todo",
-      "title": "在云服务器执行 Stage 5 GPU dry-run",
-      "notes": "优先使用云服务器上已有的 Open6DOR stage4 cache 重新生成 manifest，再跑最小 batch 训练 smoke。"
+      "title": "扩充 Open6DOR Stage 4 cache 到更大规模",
+      "notes": "下一步优先扩到 100-case，再判断是否继续扩大。Open6DOR 的 Stage 3/4 已改成默认增量补跑，不再重复执行已有有效 cache 的 case。"
     },
     {
-      "id": "stage5_closeout",
-      "owner": "local",
+      "id": "stage5_expand_spatialbench_stage4_cache",
+      "owner": "server",
       "status": "todo",
-      "title": "确认 Stage 5 训练入口稳定",
-      "notes": "待服务器 dry-run 成功后，再决定是否进入更正式的小规模训练。"
+      "title": "扩充 SpatialBench Stage 4 cache 到更大规模",
+      "notes": "建议先扩到 100-case，后续视情况扩到全量 223。"
+    },
+    {
+      "id": "stage5_train_pilot_after_cache_expand",
+      "owner": "server",
+      "status": "todo",
+      "title": "在扩量后的 cache 上执行正式 tiny-train pilot",
+      "notes": "只有在 Stage 4 cache 扩量完成后才启动 stage5_train_pilot.py。"
     }
   ]
 }
