@@ -55,6 +55,18 @@ def expand_roi_mask(roi_mask, full_shape, roi_xyxy):
     return full_mask
 
 
+def constrain_child_mask_to_parent(child_mask, parent_mask):
+    if child_mask is None:
+        return None
+    child = np.array(child_mask, dtype=bool)
+    if parent_mask is None:
+        return child
+    parent = np.array(parent_mask, dtype=bool)
+    if child.shape != parent.shape:
+        raise ValueError("child_mask shape must match parent_mask shape")
+    return np.logical_and(child, parent)
+
+
 def offset_xyxy(roi_xyxy, parent_xyxy, full_width, full_height):
     if roi_xyxy is None:
         return None
@@ -77,15 +89,21 @@ def save_stage3_cache(cache_dir, cache_payload, object_mask=None, part_mask=None
     with cache_path.open("w", encoding="utf-8") as f:
         json.dump(cache_payload, f, indent=2, ensure_ascii=False)
 
-    object_mask_path = None
-    part_mask_path = None
+    object_mask_path = cache_dir / "object_mask.npz"
+    part_mask_path = cache_dir / "part_mask.npz"
     roi_meta_path = None
+
     if object_mask is not None:
-        object_mask_path = cache_dir / "object_mask.npz"
         np.savez_compressed(object_mask_path, mask=np.array(object_mask, dtype=bool))
+    elif object_mask_path.exists():
+        object_mask_path.unlink()
+
     if part_mask is not None:
-        part_mask_path = cache_dir / "part_mask.npz"
+        if object_mask is not None:
+            part_mask = constrain_child_mask_to_parent(part_mask, object_mask)
         np.savez_compressed(part_mask_path, mask=np.array(part_mask, dtype=bool))
+    elif part_mask_path.exists():
+        part_mask_path.unlink()
 
     roi_meta = cache_payload.get("roi_meta")
     if roi_meta is None:
@@ -103,7 +121,7 @@ def save_stage3_cache(cache_dir, cache_payload, object_mask=None, part_mask=None
 
     return {
         "cache_path": str(cache_path),
-        "object_mask_path": str(object_mask_path) if object_mask_path else None,
-        "part_mask_path": str(part_mask_path) if part_mask_path else None,
+        "object_mask_path": str(object_mask_path) if object_mask_path.exists() else None,
+        "part_mask_path": str(part_mask_path) if part_mask_path.exists() else None,
         "roi_meta_path": str(roi_meta_path),
     }

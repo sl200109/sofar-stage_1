@@ -297,6 +297,101 @@ def _normalize_confidence(value, default=0.0):
     return round(score, 4)
 
 
+def _normalize_orientation_mode_label(value):
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    text = re.sub(r"_+", "_", text).strip("_")
+    if not text:
+        return ""
+
+    canonical_map = {
+        "upright": "upright",
+        "standing": "upright",
+        "stand": "upright",
+        "vertical": "upright",
+        "lying_flat": "lying_flat",
+        "lie_flat": "lying_flat",
+        "flat": "lying_flat",
+        "lying_sideways": "lying_sideways",
+        "sideways": "lying_sideways",
+        "lying_sideway": "lying_sideways",
+        "upside_down": "upside_down",
+        "plug_right": "plug_right",
+        "plug_left": "plug_left",
+        "plug_up": "plug_up",
+        "plug_down": "plug_down",
+        "handle_right": "handle_right",
+        "handle_left": "handle_left",
+        "handle_up": "handle_up",
+        "handle_down": "handle_down",
+        "clip_sideways": "clip_sideways",
+        "cap_left_bottom_right": "cap_left_bottom_right",
+        "cap_right_bottom_left": "cap_right_bottom_left",
+    }
+    if text in canonical_map:
+        return canonical_map[text]
+    return text
+
+
+def _extract_orientation_mode_from_text(text):
+    normalized = _normalize_orientation_mode_label(text)
+    if normalized:
+        known_labels = [
+            "cap_left_bottom_right",
+            "cap_right_bottom_left",
+            "clip_sideways",
+            "lying_sideways",
+            "lying_flat",
+            "upside_down",
+            "plug_right",
+            "plug_left",
+            "plug_up",
+            "plug_down",
+            "handle_right",
+            "handle_left",
+            "handle_up",
+            "handle_down",
+            "upright",
+        ]
+        if normalized in known_labels:
+            return normalized
+
+    lowered = str(text or "").lower()
+    phrase_map = [
+        ("cap left bottom right", "cap_left_bottom_right"),
+        ("cap right bottom left", "cap_right_bottom_left"),
+        ("clip sideways", "clip_sideways"),
+        ("lying sideways", "lying_sideways"),
+        ("lying flat", "lying_flat"),
+        ("upside down", "upside_down"),
+        ("plug right", "plug_right"),
+        ("plug left", "plug_left"),
+        ("plug up", "plug_up"),
+        ("plug down", "plug_down"),
+        ("handle right", "handle_right"),
+        ("handle left", "handle_left"),
+        ("handle up", "handle_up"),
+        ("handle down", "handle_down"),
+        ("upright", "upright"),
+    ]
+    for needle, label in phrase_map:
+        if needle in lowered:
+            return label
+    return ""
+
+
+def _resolve_fast_orientation_mode(model_value, task_config=None):
+    task_config = task_config or {}
+    task_candidates = [
+        task_config.get("rot_tag_detail"),
+        task_config.get("rotation_instruction"),
+    ]
+    for candidate in task_candidates:
+        label = _extract_orientation_mode_from_text(candidate)
+        if label:
+            return label
+    return _normalize_orientation_mode_label(model_value)
+
+
 def _normalize_relation(value):
     text = str(value or "").strip().lower().replace("_", " ")
     text = re.sub(r"\s+", " ", text)
@@ -439,7 +534,7 @@ def _normalize_stage2_fast_open6dor_parser_json(raw_info, instruction="", task_c
     related_objects = _dedupe_object_names(related_objects)
     relation = _normalize_relation(info.get("relation") or _infer_relation_from_text(instruction))
     direction_attributes = _ensure_string_list(info.get("direction_attributes", []))
-    orientation_mode = str(info.get("orientation_mode", "")).strip()
+    orientation_mode = _resolve_fast_orientation_mode(info.get("orientation_mode", ""), task_config=task_config)
     routing_hints = info.get("routing_hints", {}) if isinstance(info.get("routing_hints"), dict) else {}
     minimal_object_set = _dedupe_object_names(_ensure_string_list(routing_hints.get("minimal_object_set", [])))
     if not minimal_object_set:
@@ -757,6 +852,9 @@ def stage2_fast_open6dor_parser(qwen_model, processor, image_path, instruction, 
         "target_obj_name": task_config.get("target_obj_name", ""),
         "instruction": task_config.get("instruction", ""),
         "position_tag": task_config.get("position_tag", ""),
+        "rot_tag_detail": task_config.get("rot_tag_detail", ""),
+        "rot_tag_level": task_config.get("rot_tag_level", ""),
+        "rotation_instruction": task_config.get("rotation_instruction", ""),
     }
     messages = [
         {

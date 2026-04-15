@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-10T17:10:00",
+  "updated_at": "2026-04-15T15:20:00",
   "tasks": [
     {
       "id": "stage2_local_define_schema",
@@ -41,21 +41,28 @@
       "owner": "server",
       "status": "done",
       "title": "完成 Open6DOR Stage 2 parser 50-case 首轮 smoke",
-      "notes": "50/50 无运行时错误，records 与 CSV 已落盘；但语义检查发现约 26/50 样本存在 picked_object 与参考物体反转。"
+      "notes": "50/50 无运行时错误，records 与 CSV 已落盘；首轮主要暴露的是 picked_object 与参考物体反转。"
     },
     {
       "id": "stage2_server_open6dor_alignment_rerun",
       "owner": "server",
-      "status": "todo",
+      "status": "done",
       "title": "重跑 Open6DOR Stage 2 以验证 picked_object 对齐修复",
-      "notes": "重新上传 system_prompts.py 与 qwen_inference.py 后，执行 `python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`。"
+      "notes": "2026-04-15 的 50-case 重跑已确认 picked_object 与目标物体 50/50 对齐，旧的 target/reference 反转问题已解决。"
+    },
+    {
+      "id": "stage2_server_open6dor_orientation_fix",
+      "owner": "local+server",
+      "status": "in_progress",
+      "title": "修正 Open6DOR Stage 2 的 orientation_mode 语义偏差",
+      "notes": "本地已加入 rot_tag_detail / rotation_instruction 对齐和常见标签规范化，下一步是在服务器重跑 50-case 验证偏差是否显著下降。"
     },
     {
       "id": "stage2_closeout",
       "owner": "local",
       "status": "in_progress",
       "title": "完成 Stage 2 收尾并衔接 Stage 3",
-      "notes": "SpatialBench 侧已满足收尾条件；待 Open6DOR 完成一次 target/reference 对齐修复后的短重跑且结果通过，Stage 2 即可正式结束。"
+      "notes": "SpatialBench 侧已满足收尾条件；Open6DOR 已解决 picked_object 反转，但仍需收敛 orientation_mode 才能正式结束 Stage 2。"
     }
   ]
 }

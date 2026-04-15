@@ -1,72 +1,75 @@
 当前默认就是本地 Qwen，服务器命令不需要再执行 `unset SOFAR_LLM_BACKEND`。
 
-本次最新修正：
-1. `Stage 2 Open6DOR` 的 50-case 独立 parser 结果已经同步回本地，运行层面 `50/50` 跑通。
-2. 但语义检查发现约 `26/50` 条样本存在 `picked_object` 与参考物体反转的问题，例如：
-   - 指令：`Place the USB behind the bottle...`
-   - 旧结果：`picked_object = bottle`，`related_objects = ["USB"]`
-3. 本地已完成两处修复：
-   - `sofar/serve/qwen_inference.py`：当 `task_config.target_obj_name` 存在时，强制将其作为 `picked_object`，并把模型误放进去的参考物体并回 `related_objects`。
-   - `sofar/serve/system_prompts.py`：补强 prompt，明确要求 `picked_object` 必须与 `task_config.target_obj_name` 一致。
-4. 因此：
-   - `Stage 2` 现在**不能直接标记为结束**，但已经只差一次很短的校正重跑。
-   - 之前跑出来的 `Open6DOR Stage 3/4` 结果只能算临时 smoke，不作为正式基线。
-   - `SpatialBench Stage 3` 的 OOM 结论也不能写死，因为那次是两个 test 同时跑导致的并发占卡。
+本次最新进展：
+1. `Stage 2 Open6DOR` 的 50-case 校正重跑已经同步回本地：
+   - `picked_object` 已经修好，`50/50` 与目标物体对齐
+   - 但 `orientation_mode` 仍有明显偏差，约 `26/50` 与任务后缀不一致
+   - 所以 `Stage 2` 还不能正式结束
+2. `Stage 3 SpatialBench` 的新 10-case 已经单卡跑通：
+   - `success = 10`
+   - `error = 0`
+   - 之前的 OOM 更像并发占卡干扰
+3. `Stage 3 Open6DOR` 的新 10-case 暴露出明确问题：
+   - `success = 7`
+   - `error = 3`
+   - 3 条失败都在 `USB + plug_right` 任务上，错误是 `Object grounding returned no usable bbox`
+4. `Stage 4 Open6DOR` 当前 10-case 虽然显示 `10/10 success`，但不能直接相信：
+   - 因为同一批任务里 `Stage 3` 明明有 3 条失败
+   - 这说明 `Stage 4` 很可能吃到了旧 cache
+5. `Stage 4 SpatialBench` 当前 10-case 也暴露出质量问题：
+   - sample `id = 4` 出现 `part_ratio = 1.4923`
+   - 说明 `part_mask` 没有被严格限制在 `object_mask` 内
 
-如果服务器已经有上一轮 Stage 2/3/4 代码，本轮至少重新上传：
-- `sofar/serve/qwen_inference.py`
-- `sofar/serve/system_prompts.py`
+当前结论：
+- **现在先不要跑任何 50-case。**
+- 不是因为样本数不够，而是因为这轮 10-case 已经把主要问题暴露出来了。
 
-如果你想保险一点，把这批一起重传也可以：
-- `sofar/serve/system_prompts.py`
-- `sofar/serve/qwen_inference.py`
-- `sofar/serve/stage3_grounding.py`
-- `sofar/serve/stage4_point_data.py`
-- `sofar/spatialbench/eval_spatialbench.py`
-- `sofar/open6dor/open6dor_perception.py`
+本地这轮已完成的代码修补：
+1. `Stage 2 orientation_mode`
+   - fast parser 现在会额外利用 `task_config.rot_tag_detail / rotation_instruction`
+   - 归一化层会优先对齐任务标签，而不是完全相信模型自由输出
+2. `Open6DOR Stage 3 plug_right grounding`
+   - object grounding 现在支持别名回退查询
+   - part query 不再机械地直接取 `direction_attributes[0]`
+   - `plug_right` 会优先尝试 `silver plug end / plug end / larger end`
+3. `Stage 4 part_mask ⊆ object_mask`
+   - Stage 3 保存 cache 时会删除失败样本的旧 mask，避免 stale cache 混入
+   - Stage 3/4 都会对 `part_mask` 做一次 `AND object_mask` 的包含约束
 
-建议上传到服务器对应目录：
-- `/data/coding/SoFar/serve`
-- `/data/coding/SoFar/spatialbench`
-- `/data/coding/SoFar/open6dor`
+下次交接时的优先顺序：
+1. 先把这轮本地改好的文件上传到服务器
+2. 再重新跑新的 10-case，而不是直接跑 50-case
+3. 只有当新的 10-case 变干净后，再决定要不要补更大规模
 
-上传后在服务器手动执行：
-
-注意：下面命令是直接输入终端的，不要把命令前后两侧的反引号 `` ` `` 一起复制进去；否则 bash 会把输出当成命令替换，出现 `bash: [batch-log]: command not found` 之类的假报错。
-
+下次真正需要在服务器手动执行的命令，应该是修完代码之后再跑：
 1. 进入项目目录
 `cd /data/coding/SoFar`
 
-2. 先补 Stage 2 的关键校正重跑（这是下一次最优先的命令）
+2. 先上传这些本轮改过的文件：
+- `sofar/serve/system_prompts.py`
+- `sofar/serve/qwen_inference.py`
+- `sofar/serve/stage3_grounding.py`
+- `sofar/open6dor/open6dor_perception.py`
+- `sofar/spatialbench/eval_spatialbench.py`
+
+3. 先重跑 Open6DOR Stage 2 50-case
+因为这轮本地首先修的是 `orientation_mode`
 `python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`
 
-3. 重跑后重点检查：
-- `output/stage2_open6dor_parser_records.json`
-- `output/stage2_open6dor_parser_records.csv`
-- `picked_object` 是否与 `task_config.target_obj_name` 对齐
-- `related_objects` 是否保留真正参考物体，而不是把目标物体塞进去
-
-4. 如果 Stage 2 校正重跑通过，再继续 Stage 3
-- Open6DOR 先跑 10 条：
+4. 再重跑 Open6DOR Stage 3 10-case
 `python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
-- 稳定后扩到 50 条：
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 50 --speed-profile conservative`
 
-5. 然后再跑 Stage 4
-- Open6DOR 先跑 10 条：
+5. 再重跑 Open6DOR Stage 4 10-case
+注意：这一步之前需要确保对应 10 个任务的旧 `stage3/stage4` cache 已经清掉，或者换一批 fresh task slice 再测
 `python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
-- 稳定后扩到 50 条：
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 50 --speed-profile conservative`
 
-6. SpatialBench 的 Stage 3/4 下次也要补一次，但前提是不要和别的 test 并发占卡。
-- SpatialBench Stage 3：
+6. 再重跑 SpatialBench Stage 3 10-case
 `python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 10 --speed-profile conservative`
-`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 50 --speed-profile conservative`
-- SpatialBench Stage 4（依赖新的 Stage 3 cache）：
+
+7. 再重跑 SpatialBench Stage 4 10-case
 `python spatialbench/eval_spatialbench.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
-`python spatialbench/eval_spatialbench.py --stage4-pointdata-only --limit 50 --speed-profile conservative`
 
 本轮维护结论：
-- `Stage 2`：运行已通，但 Open6DOR 语义对齐需一次短重跑确认，暂不正式完结。
-- `Stage 3`：骨架没问题，Open6DOR 结果需在 Stage 2 修复后重跑；SpatialBench 需排除并发干扰后复核。
-- `Stage 4`：逻辑已通，但有效性依赖新的 Stage 3 cache，当前旧 Open6DOR 结果只算 smoke。
+- `Stage 2`：本地已补 orientation_mode 修复，等待服务器重跑确认
+- `Stage 3`：本地已补 plug_right grounding 回退策略，等待服务器重跑确认
+- `Stage 4`：本地已补 stale-cache 清理和 mask containment，等待服务器重跑确认

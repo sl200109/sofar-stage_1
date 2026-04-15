@@ -24,6 +24,7 @@ from open6dor.utils import (
     load_orientation_templates,
     normalize_object_name,
     preprocess_open6dor_image,
+    resolve_orientation_template,
 )
 from serve.scene_graph import build_open6dor_lightweight_scene_graph, open6dor_scene_graph
 from segmentation import sam, florence as detection
@@ -32,6 +33,7 @@ from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
 from serve.qwen_runtime import resolve_qwen_dtype
 from serve.stage3_grounding import (
+    constrain_child_mask_to_parent,
     crop_image_array,
     expand_roi_mask,
     first_detection_score,
@@ -917,10 +919,87 @@ def run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context):
 
 
 def _stage3_fast_part_query(parser_output):
-    direction_attributes = parser_output.get("direction_attributes", [])
-    if isinstance(direction_attributes, list) and direction_attributes:
-        return str(direction_attributes[0]).strip()
-    return ""
+    queries = _stage3_fast_part_queries(parser_output)
+    return queries[0] if queries else ""
+
+
+def _dedupe_stage3_queries(values):
+    deduped = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        deduped.append(text)
+        seen.add(key)
+    return deduped
+
+
+def _stage3_object_queries(picked_object):
+    queries = [normalize_object_name(picked_object)]
+    template = resolve_orientation_template(picked_object, ORIENTATION_TEMPLATES)
+    if template:
+        queries.extend(template.get("aliases", []))
+    alias_fallbacks = {
+        "usb": ["flash drive", "u disk"],
+        "mobile phone": ["phone", "smartphone", "cell phone"],
+        "binder clips": ["binder clip", "clips"],
+    }
+    canonical = normalize_object_name(picked_object).lower()
+    queries.extend(alias_fallbacks.get(canonical, []))
+    return _dedupe_stage3_queries(queries)
+
+
+def _stage3_fast_part_queries(parser_output):
+    direction_attributes = [
+        str(value).strip()
+        for value in parser_output.get("direction_attributes", [])
+        if str(value or "").strip()
+    ]
+    orientation_mode = str(parser_output.get("orientation_mode", "")).strip().lower()
+    picked_object = parser_output.get("picked_object", "")
+    template_hints = build_orientation_template_hints(picked_object, ORIENTATION_TEMPLATES)
+    template_attrs = template_hints.get("direction_attributes", [])
+
+    preferred = []
+    if orientation_mode.startswith("plug_"):
+        preferred = ["silver plug end", "plug end", "larger end"]
+    elif orientation_mode.startswith("handle_"):
+        preferred = ["handle"]
+    elif orientation_mode in {"upright", "upside_down"}:
+        preferred = ["top", "bottom", "cap", "opening"]
+    elif orientation_mode == "lying_flat":
+        preferred = ["larger face", "front cover", "screen", "back"]
+    elif orientation_mode in {"lying_sideways", "clip_sideways"}:
+        preferred = ["clip side", "spine", "handle", "side"]
+
+    queries = []
+    queries.extend(preferred)
+    queries.extend(direction_attributes)
+    queries.extend(template_attrs)
+    return _dedupe_stage3_queries(queries)
+
+
+def _run_detection_with_queries(image, queries, output_folder):
+    last_detections = None
+    last_score = None
+    for query in _dedupe_stage3_queries(queries):
+        detections = detection.get_detections(
+            image,
+            [query],
+            detection_model,
+            output_folder=output_folder,
+            single=True,
+            save_artifacts=False,
+        )
+        bbox = first_detection_xyxy(detections, image.width, image.height)
+        score = first_detection_score(detections)
+        last_detections = detections
+        last_score = score
+        if bbox is not None:
+            return query, detections, bbox, score
+    return "", last_detections, None, last_score
 
 
 def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
@@ -969,19 +1048,15 @@ def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
             if not picked_object:
                 failed_stage = "parser"
                 raise ValueError("Stage 3 requires a non-empty picked_object from the fast parser")
-            part_query = _stage3_fast_part_query(parser_output)
+            part_queries = _stage3_fast_part_queries(parser_output)
+            part_query = part_queries[0] if part_queries else ""
 
             stage_start = time.perf_counter()
-            object_detections = detection.get_detections(
+            _, object_detections, object_bbox, object_score = _run_detection_with_queries(
                 image,
-                [picked_object],
-                detection_model,
-                output_folder=output_dir,
-                single=True,
-                save_artifacts=False,
+                _stage3_object_queries(picked_object),
+                output_dir,
             )
-            object_bbox = first_detection_xyxy(object_detections, image.width, image.height)
-            object_score = first_detection_score(object_detections)
             timings["object_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
             if object_bbox is None:
                 failed_stage = "object_grounding"
@@ -1003,20 +1078,15 @@ def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
                 raise ValueError("Object SAM returned no mask")
             object_mask = object_masks[0]
 
-            if part_query:
+            if part_queries:
                 roi_image_np = crop_image_array(image_np, object_bbox)
                 roi_image = Image.fromarray(roi_image_np)
                 stage_start = time.perf_counter()
-                part_detections = detection.get_detections(
+                part_query, part_detections, roi_part_bbox, part_score = _run_detection_with_queries(
                     roi_image,
-                    [part_query],
-                    detection_model,
-                    output_folder=output_dir,
-                    single=True,
-                    save_artifacts=False,
+                    part_queries,
+                    output_dir,
                 )
-                roi_part_bbox = first_detection_xyxy(part_detections, roi_image.width, roi_image.height)
-                part_score = first_detection_score(part_detections)
                 timings["part_grounding_sec"] = round(time.perf_counter() - stage_start, 2)
                 if roi_part_bbox is None:
                     status = "partial"
@@ -1038,6 +1108,7 @@ def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
                         failed_stage = "part_sam"
                     else:
                         part_mask = expand_roi_mask(part_masks[0], object_mask.shape, object_bbox)
+                        part_mask = constrain_child_mask_to_parent(part_mask, object_mask)
                         part_bbox = offset_xyxy(roi_part_bbox, object_bbox, image.width, image.height)
 
             stage3_dir = Path(task_dir) / "output" / "stage3"
@@ -1198,6 +1269,7 @@ def run_stage4_pointdata_only(dataset_paths, output_dir, run_id, run_context):
                 stage3_cache = json.load(f)
             object_mask = np.load(object_mask_path)["mask"]
             part_mask = np.load(part_mask_path)["mask"] if part_mask_path.exists() else None
+            part_mask = constrain_child_mask_to_parent(part_mask, object_mask)
 
             image = Image.open(image_path).convert("RGB")
             image_np = np.array(image)

@@ -2,48 +2,65 @@
 
 ## 阶段目标
 - Stage 3 的唯一主问题：**先找物体、再找部件是否有效？**
-- 本阶段先完成本地骨架与缓存层开发，不做服务器效果收口。
-- `PSCR` 仍是主创新；`Fast Open6DOR` 只挂靠 Stage 3 的视觉基础设施，不抢主问题。
+- 本阶段先验证 `Dual-stage Grounding` 的结构链、缓存格式和失败模式，不直接宣称精度提升。
+- `PSCR` 仍是主创新；`Fast Open6DOR` 只复用 Stage 3 的视觉基础设施。
 
 ## 当前状态
-- 更新时间：2026-04-10
-- 状态：Stage 3 骨架已打通，但当前同步回来的结果需要按真实前提重新解读。
-- 当前已知事实：
-  - SpatialBench `50 case` 首轮结果：`success = 7`、`error = 43`。
-  - 这批失败里大部分是 `CUDA OOM`，但用户已明确说明当时为了省钱让两个 test 同时跑，因此该结论**不能直接当作 Stage 3 自身显存不稳的最终判断**。
-  - Open6DOR `50 case` 首轮结果：`success = 48`、`partial = 2`、`error = 0`。
-  - 但这批 Open6DOR Stage 3 结果建立在旧的 Stage 2 fast parser 输出之上；现已确认旧 parser 在不少样本里把 `picked_object` 与参考物体反了，因此这批结果只能视为**临时 smoke**，不能作为正式基线。
-- 当前判断：
-  - Stage 3 的代码骨架、缓存格式和手动入口都已经就位。
-  - SpatialBench 需要在**单独占卡**条件下重跑，才能判断显存与 part grounding 的真实稳定性。
-  - Open6DOR 需要在 Stage 2 target/reference 对齐修复后重新跑 Stage 3，旧结果不作为正式结论。
+- 更新时间：2026-04-15
+- 结论：**Stage 3 还不能结束，但这轮 10-case 已经足够说明现在不该继续跑 50-case。**
 
-## 本轮代码修改
-- 代码文件：
-  - `sofar/serve/stage3_grounding.py`
-  - `sofar/spatialbench/eval_spatialbench.py`
-  - `sofar/open6dor/open6dor_perception.py`
-- 修改目的：
-  - 把 Stage 3 从“想法”变成可上传即测的缓存骨架。
-  - 保证后续 Stage 4 可直接读取 Stage 3 缓存，不必重做 grounding。
-  - 保证服务器侧仍靠手动命令执行，不需要额外工具脚本。
+## 本轮最新结果
 
-## Stage 3 缓存格式
-- 每个样本/任务目录下至少包含：
-  - `object_part_cache.json`
-  - `object_mask.npz`
-  - `part_mask.npz`
-  - `roi_meta.json`
+### Open6DOR Stage 3（10-case）
+- 命令：`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
+- 结果：
+  - `success = 7`
+  - `partial = 0`
+  - `error = 3`
+- 3 条失败全部发生在 `object_grounding`：
+  - `Place_the_USB_behind_the_cup_on_the_table.__plug_right`
+  - `Place_the_USB_behind_the_lighter_on_the_table.__plug_right`（20240824-164221）
+  - `Place_the_USB_behind_the_pen_on_the_table.__plug_right`
+- 共同错误：
+  - `Object grounding returned no usable bbox`
+- 共同特征：
+  - 都是 `USB`
+  - 都是 `orientation_mode = plug_right`
+  - 都是细长小物体 + 细长参考场景
 
-## 当前约定
-- `functional_part` 为空时，允许跳过 part grounding。
-- object grounding 失败时，样本记录为 `object-stage failure`。
-- object grounding 成功但 part grounding 失败时，样本记录为 `partial`，并保留 object 结果。
-- Fast Open6DOR 分支当前只对 `picked object` 做重点 grounding，`reference object` 默认轻处理。
+### SpatialBench Stage 3（10-case）
+- 命令：`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 10 --speed-profile conservative`
+- 结果：
+  - `success = 10`
+  - `partial = 0`
+  - `error = 0`
+- 这说明：
+  - 之前 `50-case` 里的大量 OOM，更像是并发占卡造成的干扰
+  - 在单独占卡条件下，SpatialBench 的 Stage 3 结构链已经可以稳定跑通
+
+## 当前判断
+- `SpatialBench Stage 3`：
+  - 可以视为**结构 smoke 通过**
+  - 暂时不需要为了“证明能跑”再补 `50-case`
+- `Open6DOR Stage 3`：
+  - 还**不能收口**
+  - 当前 10-case 已经暴露出系统性 object grounding 问题，所以继续跑 `50-case` 只会扩大同类失败，信息增量不高
+- `Stage 3` 整体：
+  - 还**不能结束**
+  - 主要不是样本数不够，而是 `Open6DOR` 的失败模式已经足够明确，应该先修再测
+
+## 当前最需要修的点
+1. `Open6DOR Stage 3` 对 `plug_right` 类任务的 object grounding 不稳
+2. `Stage 2 Open6DOR` 的 `orientation_mode` 仍未收口；这会继续污染 `Stage 3` 的 part query / routing
 
 ## 下一步
-- 先完成 Stage 2 Open6DOR 对齐修复后的短重跑。
-- 然后重跑：
+- **先不要跑 Stage 3 的 50-case。**
+- 先做这两件事：
+  1. 修 `Stage 2 orientation_mode`
+  2. 修 `Open6DOR Stage 3` 的 `plug_right` object grounding
+- 修完后优先重跑：
   - `python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
-  - 稳定后再跑 `--limit 50`
-- SpatialBench Stage 3 需要在**不并发其他 test** 的条件下单独重跑，再判断是否真有显存问题。
+- 只有当这轮 `10-case` 重新达到：
+  - `Open6DOR success = 10/10`
+  - 且失败模式不再集中出现在 `plug_right`
+  才值得重新评估要不要补 `50-case`

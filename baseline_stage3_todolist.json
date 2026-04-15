@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-04-10T17:10:00",
+  "updated_at": "2026-04-15T18:20:00",
   "tasks": [
     {
       "id": "stage3_local_interface_contract",
       "owner": "local",
       "status": "done",
       "title": "固化 Stage 2 到 Stage 3 的输入接口",
-      "notes": "主线与 Fast Open6DOR 的输入字段已固定，但 Open6DOR 需要等 Stage 2 对齐修复后再作为正式上游。"
+      "notes": "主线与 Fast Open6DOR 的输入字段已固定，但 Open6DOR 仍需等 Stage 2 orientation_mode 收口后再作为正式上游。"
     },
     {
       "id": "stage3_local_dual_grounding_skeleton",
@@ -18,23 +18,30 @@
     {
       "id": "stage3_server_spatialbench_grounding_smoke",
       "owner": "server",
-      "status": "in_progress",
-      "title": "在单独占卡条件下复核 SpatialBench Stage 3 smoke",
-      "notes": "此前 50-case 结果受到并发运行干扰，OOM 不能直接视为 Stage 3 自身缺陷，需要单独占卡复核。"
+      "status": "done",
+      "title": "完成 SpatialBench Stage 3 的单卡 10-case smoke",
+      "notes": "2026-04-15 的 10-case 结果为 success=10、error=0；此前 50-case OOM 更像并发占卡干扰，当前无需急着补 50-case。"
     },
     {
       "id": "stage3_server_open6dor_grounding_smoke",
       "owner": "server",
+      "status": "in_progress",
+      "title": "复核 Open6DOR Stage 3 10-case grounding 稳定性",
+      "notes": "2026-04-15 的 10-case 结果为 success=7、error=3；失败集中在 USB + plug_right 任务的 object_grounding，当前不建议继续扩到 50-case。"
+    },
+    {
+      "id": "stage3_server_open6dor_object_grounding_fix",
+      "owner": "local",
       "status": "todo",
-      "title": "在 Stage 2 修复后重跑 Open6DOR Stage 3 smoke",
-      "notes": "旧 Open6DOR Stage 3 结果建立在错误的 picked_object 上，只能算临时 smoke；待 Stage 2 对齐修复后重新跑 10 -> 50。"
+      "title": "修正 Open6DOR Stage 3 对 plug_right 任务的 object grounding",
+      "notes": "cup/lighter/pen 三类任务均出现 Object grounding returned no usable bbox，需要先修再重跑 10-case。"
     },
     {
       "id": "stage3_closeout",
       "owner": "local",
       "status": "todo",
       "title": "汇总 Stage 3 稳定性并衔接 Stage 4",
-      "notes": "需要先完成单卡 SpatialBench 复核与 Open6DOR 重跑，才能对 Stage 3 作正式判断。"
+      "notes": "只有当 Open6DOR 10-case 重跑达到 success=10/10，且 Stage 2 orientation_mode 已收口后，才考虑 Stage 3 是否可以关闭。"
     }
   ]
 }

@@ -6,8 +6,8 @@
 - `PSCR` 是主创新，`Fast Open6DOR` 只是辅助解析分支，不能抢主线结论。
 
 ## 当前状态
-- 更新时间：2026-04-10
-- 结论：**Stage 2 还不能正式完结，但已经只差一次短重跑确认。**
+- 更新时间：2026-04-15
+- 结论：**Stage 2 仍不能正式完结；`picked_object` 已修正，但 `orientation_mode` 还有明显偏差。**
 - 已确认的结果：
   - SpatialBench `50 case`：
     - `success = 49`
@@ -17,20 +17,26 @@
     - `reference_object` 非空：`40/50`
     - `reference_frame` 分布：`object-centric = 45`，`scene-centric = 4`，空值 `1`
     - 单条失败为 sample `22`：`probability tensor contains either inf, nan or element < 0`
-  - Open6DOR `50 case`：
+  - Open6DOR `50 case`（2026-04-15 校正重跑后）：
     - `success = 50`
     - `error = 0`
     - 平均 `parser_confidence = 0.95`
+    - `picked_object` 与目标物体 `50/50` 对齐
     - `relation = behind` 全部稳定输出
-    - `orientation_mode`、`routing_hints` 均已正常落盘
 - 当前阻塞点：
-  - Open6DOR Stage 2 的语义检查发现 `picked_object` 与参考物体发生角色反转。
-  - 以当前同步回本地的 50 条记录粗查，约 `26/50` 条存在“应为被操作物体，却被解析成参考物体”的问题。
-  - 典型例子：`Place the USB behind the bottle...` 被解析成 `picked_object = bottle`、`related_objects = ["USB"]`。
+  - 旧的 target/reference 反转问题已经解决。
+  - 但 `orientation_mode` 仍有 `26/50` 条与任务后缀不一致。
+  - 主要偏差包括：
+    - `lying_flat -> upright`：`11` 条
+    - `cap_left_bottom_right -> upright / lying_sideways / sideways`：`8` 条合计
+    - `cap_right_bottom_left -> upright / lying_sideways / sideways`：`5` 条合计
+    - `clip_sideways -> lying_sideways`：`2` 条
+  - 典型例子：`Place the book behind the box...__lying_flat` 被输出为 `orientation_mode = upright`。
 - 因此当前判断：
   - Stage 2 的**运行稳定性**已经成立。
-  - Stage 2 的 **Open6DOR fast parser 语义对齐** 还需要一次修正后重跑确认。
-  - 在这次确认完成前，`Stage 3/4` 里基于旧 Open6DOR Stage 2 parser 产出的结果都只能视为**临时 smoke 结果**。
+  - Stage 2 的 **Open6DOR target object 对齐** 已经成立。
+  - Stage 2 的 **Open6DOR orientation_mode 语义对齐** 仍需继续修正与重跑确认。
+  - 在这次确认完成前，`Open6DOR Stage 3/4` 的结果仍只能视为**结构 smoke**，不能作为正式基线。
 
 ## 本轮代码修改
 - 代码文件：
@@ -42,6 +48,10 @@
   - 已修复 Stage 2 CSV 导出只写表头的问题。
   - 已在 `qwen_inference.py` 中加入 Open6DOR `picked_object` 对 `task_config.target_obj_name` 的对齐修正。
   - 已在 `system_prompts.py` 中补强约束：若提供 `task_config.target_obj_name`，则 `picked_object` 必须与之严格一致。
+  - **2026-04-15 晚间新增本地补丁**：
+    - `stage2_fast_open6dor_parser` 现在会把 `rot_tag_detail / rotation_instruction` 一起送入 fast parser
+    - `orientation_mode` 归一化层会优先对齐 `task_config.rot_tag_detail`
+    - 已加入常见标签的规范化映射，如 `lying flat -> lying_flat`、`sideways -> lying_sideways`
 
 ## Stage 2 统一 schema
 - 主线 parser 最少输出：
@@ -83,14 +93,15 @@
 - 主线 parser 输出字段稳定，不再频繁缺 key 或 schema 漂移。
 - Fast Open6DOR parser 的 `routing_hints` 可直接支持后续 fast path 判断。
 - Open6DOR `picked_object` 必须与 `task_config.target_obj_name` 对齐，不再出现大规模 target/reference 反转。
+- Open6DOR `orientation_mode` 必须与任务后缀语义基本对齐，尤其不能把大批 `lying_flat` 错写成 `upright`。
 - Stage 3 不需要再改 Stage 2 schema。
 
 ## 下一步
-- 先将最新的 `system_prompts.py` 与 `qwen_inference.py` 重新上传服务器。
-- 手动重跑：
-  - `python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`
+- 当前正在执行的 `Stage 3/4 10-case` 可以继续作为结构 smoke。
+- 先不要把 Stage 2 直接关闭。
+- 当前本地已经完成一轮 `orientation_mode` 修补；下一次优先上传最新代码到服务器，再补一次 `50 case` 重跑。
 - 重跑后优先检查：
-  - `picked_object` 是否与 `task_config.target_obj_name` 对齐
-  - `related_objects` 是否保留真正参考物体
+  - `picked_object` 是否继续保持 `50/50` 对齐
+  - `orientation_mode` 是否与任务后缀显著收敛
   - `stage2_open6dor_parser_records.csv` 是否完整生成
-- 若这一步通过，再正式将 Stage 2 标为完成，并重新执行 Open6DOR 的 Stage 3/4 smoke。
+- 即使当前 `Stage 3/4 10-case` 全通过，也不能替代 Stage 2 的 orientation_mode 收口。

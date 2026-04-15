@@ -24,6 +24,7 @@ from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
 from serve.qwen_runtime import resolve_qwen_dtype
 from serve.stage3_grounding import (
+    constrain_child_mask_to_parent,
     crop_image_array,
     expand_roi_mask,
     first_detection_score,
@@ -456,6 +457,7 @@ def run_stage3_grounding_only(args, run_id, stage2_parse_fn):
                         failed_stage = "part_sam"
                     else:
                         part_mask = expand_roi_mask(part_masks[0], object_mask.shape, object_bbox)
+                        part_mask = constrain_child_mask_to_parent(part_mask, object_mask)
                         part_bbox = offset_xyxy(roi_part_bbox, object_bbox, image.width, image.height)
             cache_payload = {
                 "dataset": "spatialbench",
@@ -622,6 +624,7 @@ def run_stage4_pointdata_only(args, run_id):
                 stage3_cache = json.load(f)
             object_mask = np.load(object_mask_path)["mask"]
             part_mask = np.load(part_mask_path)["mask"] if part_mask_path.exists() else None
+            part_mask = constrain_child_mask_to_parent(part_mask, object_mask)
 
             image = Image.open(image_path).convert("RGB")
             image_np = np.array(image)
