@@ -1,0 +1,45 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 0,
+  "question": "How many hollow balls are there?",
+  "task_type": "position",
+  "question_type": "absolute",
+  "parser_output": {
+    "target_object": "hollow ball",
+    "functional_part": "",
+    "relation": "count",
+    "reference_object": "",
+    "direction_attributes": [],
+    "parser_confidence": 0.95,
+    "reference_frame": "scene-centric",
+    "raw_text": "{\n  \"target_object\": \"hollow ball\",\n  \"functional_part\": \"\",\n  \"relation\": \"count\",\n  \"reference_frame\": \"scene-centric\",\n  \"reference_object\": \"\",\n  \"direction_attributes\": [],\n  \"parser_confidence\": 0.95\n}"
+  },
+  "grounding": {
+    "target_object": "hollow ball",
+    "functional_part": "",
+    "reference_object": "",
+    "object_bbox_xyxy": [
+      489,
+      435,
+      765,
+      709
+    ],
+    "object_score": 1.0,
+    "part_query": "",
+    "part_bbox_xyxy": null,
+    "part_score": null,
+    "image_size": [
+      2744,
+      1552
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 8.33,
+      "object_grounding_sec": 1.19,
+      "object_sam_sec": 0.72,
+      "part_grounding_sec": 0.0,
+      "part_sam_sec": 0.0
+    }
+  }
+}

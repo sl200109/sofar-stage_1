@@ -1,0 +1,71 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 1,
+  "stage3_cache_path": "/data/coding/SoFar/output/stage3_spatialbench_cache/1/object_part_cache.json",
+  "parser_output": {
+    "target_object": "dish",
+    "functional_part": "top",
+    "relation": "left",
+    "reference_object": "noodles",
+    "direction_attributes": [
+      "top"
+    ],
+    "parser_confidence": 0.98,
+    "reference_frame": "object-centric",
+    "raw_text": "```json\n{\n  \"target_object\": \"dish\",\n  \"functional_part\": \"top\",\n  \"relation\": \"left\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"noodles\",\n  \"direction_attributes\": [\"top\"],\n  \"parser_confidence\": 0.98\n}\n```"
+  },
+  "grounding": {
+    "target_object": "dish",
+    "functional_part": "top",
+    "reference_object": "noodles",
+    "object_bbox_xyxy": [
+      110,
+      83,
+      732,
+      648
+    ],
+    "object_score": 1.0,
+    "part_query": "top",
+    "part_bbox_xyxy": [
+      110,
+      83,
+      732,
+      648
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      2275,
+      1279
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 9.61,
+      "object_grounding_sec": 0.25,
+      "object_sam_sec": 0.65,
+      "part_grounding_sec": 0.18,
+      "part_sam_sec": 0.59
+    }
+  },
+  "geometry_priors": {
+    "object_point_count": 4096,
+    "part_point_count": 72,
+    "part_ratio": 0.0176,
+    "object_centroid": [
+      -0.4471,
+      -0.1961,
+      0.6235
+    ],
+    "part_centroid": [
+      -0.5314,
+      -0.2449,
+      0.6605
+    ],
+    "part_to_object_vector": [
+      -0.0844,
+      -0.0488,
+      0.037
+    ]
+  },
+  "sample_points": 4096
+}

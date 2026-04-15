@@ -1,0 +1,45 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 6,
+  "question": "What's the distance between the deskmates?",
+  "task_type": "position",
+  "question_type": "absolute",
+  "parser_output": {
+    "target_object": "deskmate",
+    "functional_part": "",
+    "relation": "distance",
+    "reference_object": "deskmate",
+    "direction_attributes": [],
+    "parser_confidence": 0.87,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"deskmate\",\n  \"functional_part\": \"\",\n  \"relation\": \"distance\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"deskmate\",\n  \"direction_attributes\": [],\n  \"parser_confidence\": 0.87\n}"
+  },
+  "grounding": {
+    "target_object": "deskmate",
+    "functional_part": "",
+    "reference_object": "deskmate",
+    "object_bbox_xyxy": [
+      0,
+      190,
+      333,
+      687
+    ],
+    "object_score": 1.0,
+    "part_query": "",
+    "part_bbox_xyxy": null,
+    "part_score": null,
+    "image_size": [
+      930,
+      688
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 9.38,
+      "object_grounding_sec": 0.19,
+      "object_sam_sec": 0.6,
+      "part_grounding_sec": 0.0,
+      "part_sam_sec": 0.0
+    }
+  }
+}

@@ -7,26 +7,23 @@
 
 ## 当前状态
 - 更新时间：2026-04-15
-- 结论：**Stage 3 还不能结束，但这轮 10-case 已经足够说明现在不该继续跑 50-case。**
+- 结论：**Stage 3 可以按当前工程 gate 正式结束。**
 
 ## 本轮最新结果
 
 ### Open6DOR Stage 3（10-case）
 - 命令：`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
 - 结果：
-  - `success = 7`
+  - `success = 10`
   - `partial = 0`
-  - `error = 3`
-- 3 条失败全部发生在 `object_grounding`：
-  - `Place_the_USB_behind_the_cup_on_the_table.__plug_right`
-  - `Place_the_USB_behind_the_lighter_on_the_table.__plug_right`（20240824-164221）
-  - `Place_the_USB_behind_the_pen_on_the_table.__plug_right`
-- 共同错误：
-  - `Object grounding returned no usable bbox`
-- 共同特征：
-  - 都是 `USB`
-  - 都是 `orientation_mode = plug_right`
-  - 都是细长小物体 + 细长参考场景
+  - `error = 0`
+- 最新同步文件：
+  - `stage3_open6dor_grounding_records_20260415_150410.json`
+  - `stage3_open6dor_perception_20260415_150410.log`
+- 变化：
+  - 旧的 `USB + plug_right` 三条 `object_grounding` 失败已全部消失
+  - `part_query` 现在统一收敛到 `silver plug end`
+  - `plug_right` 的细长小物体场景已经被打通
 
 ### SpatialBench Stage 3（10-case）
 - 命令：`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 10 --speed-profile conservative`
@@ -41,26 +38,19 @@
 ## 当前判断
 - `SpatialBench Stage 3`：
   - 可以视为**结构 smoke 通过**
-  - 暂时不需要为了“证明能跑”再补 `50-case`
+  - 当前无需再为了工程推进补 `50-case`
 - `Open6DOR Stage 3`：
-  - 还**不能收口**
-  - 当前 10-case 已经暴露出系统性 object grounding 问题，所以继续跑 `50-case` 只会扩大同类失败，信息增量不高
+  - 当前 `10-case` 已经通过
+  - 旧的 `plug_right object_grounding` 阻塞已经解除
 - `Stage 3` 整体：
-  - 还**不能结束**
-  - 主要不是样本数不够，而是 `Open6DOR` 的失败模式已经足够明确，应该先修再测
+  - 可以按当前工程 gate **结束**
+  - 已经足够支撑 Stage 4 和后续 Stage 5 的推进
 
 ## 当前最需要修的点
 1. `Open6DOR Stage 3` 对 `plug_right` 类任务的 object grounding 不稳
 2. `Stage 2 Open6DOR` 的 `orientation_mode` 仍未收口；这会继续污染 `Stage 3` 的 part query / routing
 
 ## 下一步
-- **先不要跑 Stage 3 的 50-case。**
-- 先做这两件事：
-  1. 修 `Stage 2 orientation_mode`
-  2. 修 `Open6DOR Stage 3` 的 `plug_right` object grounding
-- 修完后优先重跑：
-  - `python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
-- 只有当这轮 `10-case` 重新达到：
-  - `Open6DOR success = 10/10`
-  - 且失败模式不再集中出现在 `plug_right`
-  才值得重新评估要不要补 `50-case`
+- 当前不再需要继续重复 Stage 3 的 `50-case`。
+- 后续如果进入论文正式主表阶段，再考虑是否做更大规模复核。
+- 现在可以把精力切换到 Stage 5。

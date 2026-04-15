@@ -1,2 +1,3 @@
 from .build import build_dataset_from_cfg
 import orientation.datasets.SemanticOrientation
+import orientation.datasets.Stage4PointCache

@@ -25,23 +25,23 @@
     {
       "id": "stage3_server_open6dor_grounding_smoke",
       "owner": "server",
-      "status": "in_progress",
+      "status": "done",
       "title": "复核 Open6DOR Stage 3 10-case grounding 稳定性",
-      "notes": "2026-04-15 的 10-case 结果为 success=7、error=3；失败集中在 USB + plug_right 任务的 object_grounding，当前不建议继续扩到 50-case。"
+      "notes": "2026-04-15 15:08 的新结果为 success=10、error=0；USB + plug_right 的 object grounding 失败已消失。"
     },
     {
       "id": "stage3_server_open6dor_object_grounding_fix",
       "owner": "local",
-      "status": "todo",
+      "status": "done",
       "title": "修正 Open6DOR Stage 3 对 plug_right 任务的 object grounding",
-      "notes": "cup/lighter/pen 三类任务均出现 Object grounding returned no usable bbox，需要先修再重跑 10-case。"
+      "notes": "通过 object query 回退和 part_query 收敛已完成修补，新的 10-case 已验证通过。"
     },
     {
       "id": "stage3_closeout",
       "owner": "local",
-      "status": "todo",
+      "status": "done",
       "title": "汇总 Stage 3 稳定性并衔接 Stage 4",
-      "notes": "只有当 Open6DOR 10-case 重跑达到 success=10/10，且 Stage 2 orientation_mode 已收口后，才考虑 Stage 3 是否可以关闭。"
+      "notes": "Stage 2 已收口，Stage 3 两侧 10-case 已通过，当前按工程 gate 关闭并衔接 Stage 5。"
     }
   ]
 }

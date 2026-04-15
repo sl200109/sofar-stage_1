@@ -1,0 +1,71 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 4,
+  "stage3_cache_path": "/data/coding/SoFar/output/stage3_spatialbench_cache/4/object_part_cache.json",
+  "parser_output": {
+    "target_object": "camera",
+    "functional_part": "lens",
+    "relation": "angle",
+    "reference_object": "ground",
+    "direction_attributes": [
+      "lens"
+    ],
+    "parser_confidence": 0.87,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"camera\",\n  \"functional_part\": \"lens\",\n  \"relation\": \"angle\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"ground\",\n  \"direction_attributes\": [\"lens\"],\n  \"parser_confidence\": 0.87\n}"
+  },
+  "grounding": {
+    "target_object": "camera",
+    "functional_part": "lens",
+    "reference_object": "ground",
+    "object_bbox_xyxy": [
+      179,
+      114,
+      210,
+      175
+    ],
+    "object_score": 1.0,
+    "part_query": "lens",
+    "part_bbox_xyxy": [
+      179,
+      114,
+      209,
+      174
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      382,
+      506
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 8.02,
+      "object_grounding_sec": 0.18,
+      "object_sam_sec": 0.6,
+      "part_grounding_sec": 0.15,
+      "part_sam_sec": 0.57
+    }
+  },
+  "geometry_priors": {
+    "object_point_count": 715,
+    "part_point_count": 641,
+    "part_ratio": 0.8965,
+    "object_centroid": [
+      0.0068,
+      -0.4524,
+      4.341
+    ],
+    "part_centroid": [
+      0.0034,
+      -0.4505,
+      4.2871
+    ],
+    "part_to_object_vector": [
+      -0.0034,
+      0.0019,
+      -0.054
+    ]
+  },
+  "sample_points": 4096
+}

@@ -1,0 +1,52 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 8,
+  "question": "Count from left to right, which hand does the teacher mostly be likely to point at?",
+  "task_type": "orientation",
+  "question_type": "relative",
+  "parser_output": {
+    "target_object": "teacher's hand",
+    "functional_part": "hand",
+    "relation": "left",
+    "reference_object": "student's hand",
+    "direction_attributes": [
+      "left"
+    ],
+    "parser_confidence": 0.87,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"teacher's hand\",\n  \"functional_part\": \"hand\",\n  \"relation\": \"left\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"student's hand\",\n  \"direction_attributes\": [\"left\"],\n  \"parser_confidence\": 0.87\n}"
+  },
+  "grounding": {
+    "target_object": "teacher's hand",
+    "functional_part": "hand",
+    "reference_object": "student's hand",
+    "object_bbox_xyxy": [
+      0,
+      51,
+      222,
+      420
+    ],
+    "object_score": 1.0,
+    "part_query": "hand",
+    "part_bbox_xyxy": [
+      60,
+      96,
+      140,
+      227
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      932,
+      420
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 8.73,
+      "object_grounding_sec": 0.2,
+      "object_sam_sec": 0.59,
+      "part_grounding_sec": 0.2,
+      "part_sam_sec": 0.58
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "image_size": [
+    2744,
+    1552
+  ],
+  "object_bbox_xyxy": [
+    489,
+    435,
+    765,
+    709
+  ],
+  "part_bbox_xyxy": null,
+  "status": "success",
+  "failed_stage": null
+}

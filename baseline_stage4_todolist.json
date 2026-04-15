@@ -1,54 +1,33 @@
 {
-  "updated_at": "2026-04-15T18:20:00",
+  "updated_at": "2026-04-15T21:10:00",
   "tasks": [
     {
-      "id": "stage4_local_cache_contract",
-      "owner": "local",
+      "id": "stage4_server_open6dor_point_smoke",
+      "owner": "server",
       "status": "done",
-      "title": "定义 Stage 4 点数据缓存格式",
-      "notes": "point_data_cache.json、object_points.npz、part_points.npz 已固定。"
-    },
-    {
-      "id": "stage4_local_point_builder",
-      "owner": "local",
-      "status": "done",
-      "title": "接入 object/part point 构建与采样逻辑",
-      "notes": "Stage 4 构建逻辑已经可运行，现阶段主要依赖 Stage 3 cache 的正确性。"
+      "title": "完成 Open6DOR Stage 4 10-case point cache 生成",
+      "notes": "最新 10-case 结果可用，stale cache 假成功问题已解除。"
     },
     {
       "id": "stage4_server_spatialbench_point_smoke",
       "owner": "server",
-      "status": "in_progress",
-      "title": "复核 SpatialBench Stage 4 10-case 点数据质量",
-      "notes": "2026-04-15 的 10-case 为 success=10、error=0，但 sample 4 出现 part_ratio=1.4923，说明 part_mask 与 object_mask 的包含关系还不可靠。"
+      "status": "done",
+      "title": "完成 SpatialBench Stage 4 10-case point cache 生成",
+      "notes": "10-case 全部成功，part_mask containment 修复后 part_ratio 已恢复到合理范围。"
     },
     {
-      "id": "stage4_server_open6dor_point_smoke",
-      "owner": "server",
-      "status": "in_progress",
-      "title": "复核 Open6DOR Stage 4 10-case 是否使用 fresh cache",
-      "notes": "当前 10-case 虽然 10/10 success，但与同轮 Stage 3 的 3 条失败矛盾，高概率混入旧 cache；先不要扩到 50-case。"
-    },
-    {
-      "id": "stage4_local_mask_containment_fix",
+      "id": "stage4_local_manifest_handoff",
       "owner": "local",
-      "status": "todo",
-      "title": "修正 Stage 4 的 part_mask 与 object_mask 一致性",
-      "notes": "需要确保 part_mask 被限制在 object_mask 内，至少不能再出现 part_ratio > 1。"
-    },
-    {
-      "id": "stage4_server_fresh_cache_rerun",
-      "owner": "server",
-      "status": "todo",
-      "title": "清理旧 cache 后重跑 Open6DOR Stage 3 -> Stage 4 10-case",
-      "notes": "需要保证当前 10-task slice 使用 fresh 的 stage3/stage4 产物，否则 Stage 4 结果不可作为正式判断依据。"
+      "status": "done",
+      "title": "将 Stage 4 smoke cache 统一整理为 Stage 5 manifest",
+      "notes": "本地已生成 SpatialBench / Open6DOR smoke manifest 及 summary。Open6DOR 本地可用条目为 0，原因是逐任务 cache 未同步。"
     },
     {
       "id": "stage4_closeout",
       "owner": "local",
-      "status": "todo",
-      "title": "汇总 Stage 4 点数据质量并衔接 Stage 5",
-      "notes": "只有在 Open6DOR fresh-cache 10-case 和 SpatialBench mask-consistency 10-case 都通过后，才考虑 Stage 4 是否需要再补 50-case。"
+      "status": "done",
+      "title": "确认 Stage 4 工程收口完成",
+      "notes": "Stage 4 当前不再继续重复补跑，直接作为 Stage 5 的输入层。"
     }
   ]
 }

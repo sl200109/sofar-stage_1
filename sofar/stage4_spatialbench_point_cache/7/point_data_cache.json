@@ -1,0 +1,71 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 7,
+  "stage3_cache_path": "/data/coding/SoFar/output/stage3_spatialbench_cache/7/object_part_cache.json",
+  "parser_output": {
+    "target_object": "girl",
+    "functional_part": "head",
+    "relation": "taller",
+    "reference_object": "girl",
+    "direction_attributes": [
+      "head"
+    ],
+    "parser_confidence": 0.98,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"girl\",\n  \"functional_part\": \"head\",\n  \"relation\": \"taller\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"girl\",\n  \"direction_attributes\": [\"head\"],\n  \"parser_confidence\": 0.98\n}"
+  },
+  "grounding": {
+    "target_object": "girl",
+    "functional_part": "head",
+    "reference_object": "girl",
+    "object_bbox_xyxy": [
+      89,
+      9,
+      621,
+      789
+    ],
+    "object_score": 1.0,
+    "part_query": "head",
+    "part_bbox_xyxy": [
+      321,
+      10,
+      540,
+      287
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      1200,
+      790
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 8.29,
+      "object_grounding_sec": 0.22,
+      "object_sam_sec": 0.63,
+      "part_grounding_sec": 0.17,
+      "part_sam_sec": 0.59
+    }
+  },
+  "geometry_priors": {
+    "object_point_count": 4096,
+    "part_point_count": 4096,
+    "part_ratio": 1.0,
+    "object_centroid": [
+      -0.2833,
+      0.0993,
+      1.2484
+    ],
+    "part_centroid": [
+      -0.241,
+      -0.4467,
+      1.3668
+    ],
+    "part_to_object_vector": [
+      0.0423,
+      -0.5461,
+      0.1184
+    ]
+  },
+  "sample_points": 4096
+}

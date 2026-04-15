@@ -53,16 +53,16 @@
     {
       "id": "stage2_server_open6dor_orientation_fix",
       "owner": "local+server",
-      "status": "in_progress",
+      "status": "done",
       "title": "修正 Open6DOR Stage 2 的 orientation_mode 语义偏差",
-      "notes": "本地已加入 rot_tag_detail / rotation_instruction 对齐和常见标签规范化，下一步是在服务器重跑 50-case 验证偏差是否显著下降。"
+      "notes": "2026-04-15 15:03 的 50-case 重跑已确认 orientation_mode 与 task_rotation_label 对齐为 50/50。"
     },
     {
       "id": "stage2_closeout",
       "owner": "local",
-      "status": "in_progress",
+      "status": "done",
       "title": "完成 Stage 2 收尾并衔接 Stage 3",
-      "notes": "SpatialBench 侧已满足收尾条件；Open6DOR 已解决 picked_object 反转，但仍需收敛 orientation_mode 才能正式结束 Stage 2。"
+      "notes": "Stage 2 已满足收尾条件；Open6DOR 已同时解决 picked_object 与 orientation_mode，对后续 Stage 3/4 的前提约束已经稳定。"
     }
   ]
 }

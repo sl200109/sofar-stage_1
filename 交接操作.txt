@@ -1,75 +1,83 @@
-当前默认就是本地 Qwen，服务器命令不需要再执行 `unset SOFAR_LLM_BACKEND`。
-
-本次最新进展：
-1. `Stage 2 Open6DOR` 的 50-case 校正重跑已经同步回本地：
-   - `picked_object` 已经修好，`50/50` 与目标物体对齐
-   - 但 `orientation_mode` 仍有明显偏差，约 `26/50` 与任务后缀不一致
-   - 所以 `Stage 2` 还不能正式结束
-2. `Stage 3 SpatialBench` 的新 10-case 已经单卡跑通：
-   - `success = 10`
-   - `error = 0`
-   - 之前的 OOM 更像并发占卡干扰
-3. `Stage 3 Open6DOR` 的新 10-case 暴露出明确问题：
-   - `success = 7`
-   - `error = 3`
-   - 3 条失败都在 `USB + plug_right` 任务上，错误是 `Object grounding returned no usable bbox`
-4. `Stage 4 Open6DOR` 当前 10-case 虽然显示 `10/10 success`，但不能直接相信：
-   - 因为同一批任务里 `Stage 3` 明明有 3 条失败
-   - 这说明 `Stage 4` 很可能吃到了旧 cache
-5. `Stage 4 SpatialBench` 当前 10-case 也暴露出质量问题：
-   - sample `id = 4` 出现 `part_ratio = 1.4923`
-   - 说明 `part_mask` 没有被严格限制在 `object_mask` 内
-
 当前结论：
-- **现在先不要跑任何 50-case。**
-- 不是因为样本数不够，而是因为这轮 10-case 已经把主要问题暴露出来了。
+1. `Stage 2` 已完成并关闭。
+2. `Stage 3` 已完成并关闭。
+3. `Stage 4` 已完成工程收口，并已把 smoke cache 交接给 `Stage 5`。
+4. 当前不要再重复跑 `Stage 2/3/4` 的 `10-case / 50-case`。
+5. 下一步主线已经切换到 `Stage 5`。
 
-本地这轮已完成的代码修补：
-1. `Stage 2 orientation_mode`
-   - fast parser 现在会额外利用 `task_config.rot_tag_detail / rotation_instruction`
-   - 归一化层会优先对齐任务标签，而不是完全相信模型自由输出
-2. `Open6DOR Stage 3 plug_right grounding`
-   - object grounding 现在支持别名回退查询
-   - part query 不再机械地直接取 `direction_attributes[0]`
-   - `plug_right` 会优先尝试 `silver plug end / plug end / larger end`
-3. `Stage 4 part_mask ⊆ object_mask`
-   - Stage 3 保存 cache 时会删除失败样本的旧 mask，避免 stale cache 混入
-   - Stage 3/4 都会对 `part_mask` 做一次 `AND object_mask` 的包含约束
+本次本地新增内容：
+1. `Stage 4 -> Stage 5 manifest` 工具
+   - `sofar/serve/stage5_manifest.py`
+2. `Stage 5 Dataset/DataLoader`
+   - `sofar/orientation/datasets/Stage4PointCache.py`
+3. `Part-conditioned Orientation Head` 最小 dry-run 模型
+   - `sofar/orientation/models/PartConditionedOrientationHead.py`
+4. `Stage 5` 最小 dry-run 入口
+   - `sofar/orientation/stage5_dry_run.py`
+5. 相关注册文件
+   - `sofar/orientation/datasets/__init__.py`
+   - `sofar/orientation/models/__init__.py`
 
-下次交接时的优先顺序：
-1. 先把这轮本地改好的文件上传到服务器
-2. 再重新跑新的 10-case，而不是直接跑 50-case
-3. 只有当新的 10-case 变干净后，再决定要不要补更大规模
+本地已经完成的验证：
+1. 已生成：
+   - `sofar/output/stage5_manifest_spatialbench_smoke.jsonl`
+   - `sofar/output/stage5_manifest_open6dor_smoke.jsonl`
+   - `sofar/output/stage5_manifest_summary.json`
+2. manifest 当前状态：
+   - `SpatialBench`：`10/10` 本地可用
+   - `Open6DOR`：`0/10` 本地可用
+   - 原因：本地没有同步逐任务 `output/stage4` cache，只同步了 records 文件
+3. 已完成一次本地最小 dry-run：
+   - 结果文件：`sofar/output/stage5_dry_run_summary.json`
+   - 结果摘要：
+     - `dataset_size = 4`
+     - `batch_size = 2`
+     - `num_points = 1024`
+     - `device = cpu`
+     - `loss = 0.470613`
+   - 说明 `manifest -> Dataset/DataLoader -> model -> loss/backward` 全链可跑
 
-下次真正需要在服务器手动执行的命令，应该是修完代码之后再跑：
+注意：
+1. 当前 `Stage 5` dry-run 使用的是最小 smoke 版 `PartConditionedOrientationHead`
+2. 现在能证明的是训练链入口成立，不是最终 benchmark 性能已经提升
+3. 当前最值得做的是云服务器上的 GPU dry-run，而不是回头重复 Stage 2/3/4
+
+下次需要上传到云服务器的文件：
+1. `sofar/serve/stage5_manifest.py`
+2. `sofar/orientation/datasets/Stage4PointCache.py`
+3. `sofar/orientation/datasets/__init__.py`
+4. `sofar/orientation/models/PartConditionedOrientationHead.py`
+5. `sofar/orientation/models/__init__.py`
+6. `sofar/orientation/stage5_dry_run.py`
+
+下次到云服务器后的执行顺序：
 1. 进入项目目录
 `cd /data/coding/SoFar`
 
-2. 先上传这些本轮改过的文件：
-- `sofar/serve/system_prompts.py`
-- `sofar/serve/qwen_inference.py`
-- `sofar/serve/stage3_grounding.py`
-- `sofar/open6dor/open6dor_perception.py`
-- `sofar/spatialbench/eval_spatialbench.py`
+2. 不需要再跑 Stage 2/3/4
 
-3. 先重跑 Open6DOR Stage 2 50-case
-因为这轮本地首先修的是 `orientation_mode`
-`python open6dor/open6dor_perception.py --stage2-parser-only --limit 50 --speed-profile conservative`
+3. 直接执行 Stage 5 manifest + dry-run
+`python orientation/stage5_dry_run.py --repo-root /data/coding/SoFar --batch-size 2 --num-points 1024 --max-samples 8 --device cuda`
 
-4. 再重跑 Open6DOR Stage 3 10-case
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 10 --speed-profile conservative`
+这条命令会自动做：
+1. 从现有 `stage4_*_point_records.json` 生成 smoke manifest
+2. 优先选择当前可用的 manifest
+3. 构建 `Stage 5 Dataset/DataLoader`
+4. 跑一个最小 batch 的 forward/backward
+5. 输出：
+   - `output/stage5_manifest_spatialbench_smoke.jsonl`
+   - `output/stage5_manifest_open6dor_smoke.jsonl`
+   - `output/stage5_manifest_summary.json`
+   - `output/stage5_dry_run_summary.json`
 
-5. 再重跑 Open6DOR Stage 4 10-case
-注意：这一步之前需要确保对应 10 个任务的旧 `stage3/stage4` cache 已经清掉，或者换一批 fresh task slice 再测
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
+下次执行后需要同步回本地的内容：
+1. `sofar/output/stage5_manifest_summary.json`
+2. `sofar/output/stage5_dry_run_summary.json`
+3. 如果云服务器上已经能访问 Open6DOR 的逐任务 `stage4` cache，也一并同步：
+   - `sofar/output/stage5_manifest_open6dor_smoke.jsonl`
 
-6. 再重跑 SpatialBench Stage 3 10-case
-`python spatialbench/eval_spatialbench.py --stage3-grounding-only --limit 10 --speed-profile conservative`
-
-7. 再重跑 SpatialBench Stage 4 10-case
-`python spatialbench/eval_spatialbench.py --stage4-pointdata-only --limit 10 --speed-profile conservative`
-
-本轮维护结论：
-- `Stage 2`：本地已补 orientation_mode 修复，等待服务器重跑确认
-- `Stage 3`：本地已补 plug_right grounding 回退策略，等待服务器重跑确认
-- `Stage 4`：本地已补 stale-cache 清理和 mask containment，等待服务器重跑确认
+下次我接手时会优先看：
+1. 云服务器 Stage 5 dry-run 是否 GPU 跑通
+2. Open6DOR manifest 在服务器上是否从 `0` 变成可用
+3. loss、batch、样本选择是否稳定
+4. 然后再决定是否进入更正式的小规模训练

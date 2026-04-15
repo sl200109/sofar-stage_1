@@ -1,0 +1,52 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 2,
+  "question": "Count from right to left and start at 1, which two of the red flower pots are the group of people in the middle of?",
+  "task_type": "position",
+  "question_type": "absolute",
+  "parser_output": {
+    "target_object": "red flower pot",
+    "functional_part": "middle",
+    "relation": "between",
+    "reference_object": "people",
+    "direction_attributes": [
+      "middle"
+    ],
+    "parser_confidence": 0.87,
+    "reference_frame": "object-centric",
+    "raw_text": "```json\n{\n  \"target_object\": \"red flower pot\",\n  \"functional_part\": \"\",\n  \"relation\": \"between\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"people\",\n  \"direction_attributes\": [\"middle\"],\n  \"parser_confidence\": 0.87\n}\n```"
+  },
+  "grounding": {
+    "target_object": "red flower pot",
+    "functional_part": "middle",
+    "reference_object": "people",
+    "object_bbox_xyxy": [
+      149,
+      750,
+      288,
+      864
+    ],
+    "object_score": 1.0,
+    "part_query": "middle",
+    "part_bbox_xyxy": [
+      149,
+      750,
+      288,
+      864
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      1706,
+      1279
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 9.65,
+      "object_grounding_sec": 0.26,
+      "object_sam_sec": 0.63,
+      "part_grounding_sec": 0.17,
+      "part_sam_sec": 0.58
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 5,
+  "question": "What is the angle difference between the orientations of the two white cars?",
+  "task_type": "orientation",
+  "question_type": "absolute",
+  "parser_output": {
+    "target_object": "white car",
+    "functional_part": "angle",
+    "relation": "angle",
+    "reference_object": "white car",
+    "direction_attributes": [
+      "angle"
+    ],
+    "parser_confidence": 0.85,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"white car\",\n  \"functional_part\": \"\",\n  \"relation\": \"angle\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"white car\",\n  \"direction_attributes\": [\"angle\"],\n  \"parser_confidence\": 0.85\n}"
+  },
+  "grounding": {
+    "target_object": "white car",
+    "functional_part": "angle",
+    "reference_object": "white car",
+    "object_bbox_xyxy": [
+      451,
+      573,
+      946,
+      740
+    ],
+    "object_score": 1.0,
+    "part_query": "angle",
+    "part_bbox_xyxy": [
+      461,
+      573,
+      935,
+      738
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      2076,
+      836
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 7.94,
+      "object_grounding_sec": 0.21,
+      "object_sam_sec": 0.61,
+      "part_grounding_sec": 0.16,
+      "part_sam_sec": 0.58
+    }
+  }
+}

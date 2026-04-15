@@ -7,7 +7,7 @@
 
 ## 当前状态
 - 更新时间：2026-04-15
-- 结论：**Stage 2 仍不能正式完结；`picked_object` 已修正，但 `orientation_mode` 还有明显偏差。**
+- 结论：**Stage 2 可以正式结束。**
 - 已确认的结果：
   - SpatialBench `50 case`：
     - `success = 49`
@@ -17,26 +17,21 @@
     - `reference_object` 非空：`40/50`
     - `reference_frame` 分布：`object-centric = 45`，`scene-centric = 4`，空值 `1`
     - 单条失败为 sample `22`：`probability tensor contains either inf, nan or element < 0`
-  - Open6DOR `50 case`（2026-04-15 校正重跑后）：
+  - Open6DOR `50 case`（2026-04-15 15:03 最新重跑）：
     - `success = 50`
     - `error = 0`
     - 平均 `parser_confidence = 0.95`
     - `picked_object` 与目标物体 `50/50` 对齐
     - `relation = behind` 全部稳定输出
+    - `orientation_mode` 与 `task_rotation_label` 对齐：`50/50`
 - 当前阻塞点：
   - 旧的 target/reference 反转问题已经解决。
-  - 但 `orientation_mode` 仍有 `26/50` 条与任务后缀不一致。
-  - 主要偏差包括：
-    - `lying_flat -> upright`：`11` 条
-    - `cap_left_bottom_right -> upright / lying_sideways / sideways`：`8` 条合计
-    - `cap_right_bottom_left -> upright / lying_sideways / sideways`：`5` 条合计
-    - `clip_sideways -> lying_sideways`：`2` 条
-  - 典型例子：`Place the book behind the box...__lying_flat` 被输出为 `orientation_mode = upright`。
+  - 旧的 `orientation_mode` 偏差也已经解决。
 - 因此当前判断：
-  - Stage 2 的**运行稳定性**已经成立。
-  - Stage 2 的 **Open6DOR target object 对齐** 已经成立。
-  - Stage 2 的 **Open6DOR orientation_mode 语义对齐** 仍需继续修正与重跑确认。
-  - 在这次确认完成前，`Open6DOR Stage 3/4` 的结果仍只能视为**结构 smoke**，不能作为正式基线。
+  - Stage 2 的**运行稳定性**成立。
+  - Stage 2 的 **Open6DOR target object 对齐** 成立。
+  - Stage 2 的 **Open6DOR orientation_mode 语义对齐** 也成立。
+  - Stage 2 已满足进入 Stage 3/4 后续判断的前提条件。
 
 ## 本轮代码修改
 - 代码文件：
@@ -97,11 +92,8 @@
 - Stage 3 不需要再改 Stage 2 schema。
 
 ## 下一步
-- 当前正在执行的 `Stage 3/4 10-case` 可以继续作为结构 smoke。
-- 先不要把 Stage 2 直接关闭。
-- 当前本地已经完成一轮 `orientation_mode` 修补；下一次优先上传最新代码到服务器，再补一次 `50 case` 重跑。
-- 重跑后优先检查：
-  - `picked_object` 是否继续保持 `50/50` 对齐
-  - `orientation_mode` 是否与任务后缀显著收敛
-  - `stage2_open6dor_parser_records.csv` 是否完整生成
-- 即使当前 `Stage 3/4 10-case` 全通过，也不能替代 Stage 2 的 orientation_mode 收口。
+- Stage 2 不再需要继续重复重跑。
+- 重点切换到：
+  - `Open6DOR Stage 3/4` 是否真的吃到了这轮新代码
+  - `SpatialBench Stage 4` 的 `part_ratio > 1` 是否被修掉
+- 只有在拿到新的 `Stage 3/4` 同步产物后，才能判断是否进入 Stage 5。

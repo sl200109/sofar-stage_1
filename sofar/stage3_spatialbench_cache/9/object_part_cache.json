@@ -1,0 +1,53 @@
+{
+  "dataset": "spatialbench",
+  "sample_id": 9,
+  "question": "What is the angle between the orientation of the buddha and the building's gate?",
+  "task_type": "orientation",
+  "question_type": "absolute",
+  "parser_output": {
+    "target_object": "buddha statue",
+    "functional_part": "buddha statue",
+    "relation": "angle",
+    "reference_object": "building's gate",
+    "direction_attributes": [
+      "buddha statue",
+      "building's gate"
+    ],
+    "parser_confidence": 0.85,
+    "reference_frame": "object-centric",
+    "raw_text": "{\n  \"target_object\": \"buddha statue\",\n  \"functional_part\": \"\",\n  \"relation\": \"angle\",\n  \"reference_frame\": \"object-centric\",\n  \"reference_object\": \"building's gate\",\n  \"direction_attributes\": [\"buddha statue\", \"building's gate\"],\n  \"parser_confidence\": 0.85\n}"
+  },
+  "grounding": {
+    "target_object": "buddha statue",
+    "functional_part": "buddha statue",
+    "reference_object": "building's gate",
+    "object_bbox_xyxy": [
+      236,
+      352,
+      408,
+      557
+    ],
+    "object_score": 1.0,
+    "part_query": "buddha statue",
+    "part_bbox_xyxy": [
+      239,
+      354,
+      404,
+      554
+    ],
+    "part_score": 1.0,
+    "image_size": [
+      878,
+      818
+    ],
+    "status": "success",
+    "failed_stage": null,
+    "timings": {
+      "parser_sec": 9.78,
+      "object_grounding_sec": 0.21,
+      "object_sam_sec": 0.6,
+      "part_grounding_sec": 0.18,
+      "part_sam_sec": 0.58
+    }
+  }
+}
