@@ -9,6 +9,16 @@ import numpy as np
 SERVER_ROOT = "/data/coding/SoFar"
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(parsed):
+        return default
+    return parsed
+
+
 def _stable_split(sample_key: str) -> str:
     digest = hashlib.md5(sample_key.encode("utf-8")).hexdigest()
     bucket = int(digest[:2], 16)
@@ -26,8 +36,10 @@ def _normalize_vector(vector: Optional[Iterable[float]]) -> Tuple[List[float], s
     if arr.size < 3:
         return [0.0, 0.0, 1.0], "fallback_default_axis"
     arr = arr[:3]
+    if not np.all(np.isfinite(arr)):
+        return [0.0, 0.0, 1.0], "fallback_default_axis"
     norm = float(np.linalg.norm(arr))
-    if norm <= 1e-6:
+    if (not np.isfinite(norm)) or norm <= 1e-6:
         return [0.0, 0.0, 1.0], "fallback_default_axis"
     arr = arr / norm
     return [round(float(v), 6) for v in arr], "geometry_priors.part_to_object_vector"
@@ -46,9 +58,10 @@ def _resolve_pilot_label(
     parser_output = cache_payload.get("parser_output", {}) or {}
 
     vector = geometry.get("part_to_object_vector")
-    if vector is not None and float(np.linalg.norm(np.array(vector, dtype=np.float32))) > 1e-6:
+    if vector is not None:
         normalized, source = _normalize_vector(vector)
-        return normalized, source, 1.0
+        if source != "fallback_default_axis":
+            return normalized, source, 1.0
 
     if dataset == "open6dor":
         orientation_mode = str(parser_output.get("orientation_mode", "") or "").strip().lower()
@@ -117,12 +130,13 @@ def _build_prior_vector(cache_payload: Dict[str, Any]) -> List[float]:
     vector = list(vector)[:3] if isinstance(vector, list) else [0.0, 0.0, 0.0]
     while len(vector) < 3:
         vector.append(0.0)
+    vector = [_safe_float(v, 0.0) for v in vector[:3]]
 
-    object_count = float(geometry.get("object_point_count") or 0.0)
-    part_count = float(geometry.get("part_point_count") or 0.0)
-    part_ratio = float(geometry.get("part_ratio") or 0.0)
-    object_score = float(grounding.get("object_score") or 0.0)
-    part_score = float(grounding.get("part_score") or 0.0)
+    object_count = _safe_float(geometry.get("object_point_count"), 0.0)
+    part_count = _safe_float(geometry.get("part_point_count"), 0.0)
+    part_ratio = _safe_float(geometry.get("part_ratio"), 0.0)
+    object_score = _safe_float(grounding.get("object_score"), 0.0)
+    part_score = _safe_float(grounding.get("part_score"), 0.0)
 
     return [
         round(part_ratio, 6),

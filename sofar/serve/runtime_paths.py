@@ -11,6 +11,8 @@ ENV_POINTSO_CFG = "SOFAR_POINTSO_CFG"
 ENV_POINTSO_CKPT = "SOFAR_POINTSO_CKPT"
 ENV_METRIC3D_CKPT = "SOFAR_METRIC3D_CKPT"
 ENV_GROUNDINGDINO_TEXT_ENCODER = "SOFAR_GROUNDINGDINO_TEXT_ENCODER"
+ENV_STAGE5_OPEN6DOR_CKPT = "SOFAR_STAGE5_OPEN6DOR_CKPT"
+ENV_STAGE5_SPATIALBENCH_CKPT = "SOFAR_STAGE5_SPATIALBENCH_CKPT"
 
 _DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -95,6 +97,20 @@ def groundingdino_text_encoder_path() -> Path:
     if custom:
         return _resolve_path(custom, base=checkpoints_dir())
     return checkpoints_dir() / "bert-base-uncased"
+
+
+def stage5_open6dor_checkpoint_path() -> Path:
+    custom = os.getenv(ENV_STAGE5_OPEN6DOR_CKPT)
+    if custom:
+        return _resolve_path(custom, base=sofar_root())
+    return output_dir() / "stage5_open6dor_train" / "stage5_pilot_best.pth"
+
+
+def stage5_spatialbench_checkpoint_path() -> Path:
+    custom = os.getenv(ENV_STAGE5_SPATIALBENCH_CKPT)
+    if custom:
+        return _resolve_path(custom, base=sofar_root())
+    return output_dir() / "stage5_spatialbench_train" / "stage5_pilot_best.pth"
 
 
 def open6dor_dataset_dir() -> Path:

@@ -98,7 +98,7 @@ def _build_eval_manifest(summary: dict, dataset_mode: str, subset: str, output_d
         entries = _load_jsonl(manifest_path)
         selected.extend([item for item in entries if item.get("split", "train") == subset])
     selected = selected[:max_samples]
-    manifest_path = output_dir / f"stage5_{subset}_eval_manifest.jsonl"
+    manifest_path = output_dir / f"stage5_{dataset_mode}_{subset}_eval_manifest.jsonl"
     _write_jsonl(manifest_path, selected)
     return manifest_path, selected
 
@@ -205,7 +205,8 @@ def main():
         "dataset_size": len(dataset),
         "metrics": metrics,
     }
-    summary_path = output_dir / f"stage5_{args.subset}_eval_summary.json"
+    summary_path = output_dir / f"stage5_{args.dataset_mode}_{args.subset}_eval_summary.json"
+    summary["summary_path"] = str(summary_path)
     with summary_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(json.dumps(summary, indent=2, ensure_ascii=False))

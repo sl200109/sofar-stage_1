@@ -12,6 +12,7 @@ from serve.system_prompts import (
     stage2_part_parser_prompt,
     vqa_parsing_prompt,
     vqa_reasoning_prompt,
+    vqa_reasoning_stage5_prompt,
 )
 
 
@@ -987,8 +988,9 @@ def vqa_parsing(qwen_model, processor, image_path, instruction):
     return info
 
 
-def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_graph, eval=False):
-    system_prompt = vqa_reasoning_prompt
+def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_graph, eval=False, stage5_context=None):
+    use_stage5_prompt = bool(stage5_context and stage5_context.get("applicable"))
+    system_prompt = vqa_reasoning_stage5_prompt if use_stage5_prompt else vqa_reasoning_prompt
     if eval:
         system_prompt += (
             "You will receive an image from the user, a question, and four options. "
@@ -996,6 +998,15 @@ def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_
         )
     else:
         system_prompt += "Provide a detail analysis of the question and the image to answer the question."
+
+    stage5_block = ""
+    if use_stage5_prompt:
+        evidence_lines = stage5_context.get("evidence_lines") or []
+        evidence_text = "\n".join(f"- {line}" for line in evidence_lines)
+        stage5_block = (
+            f"\nStage 5 orientation evidence:\n{evidence_text}\n"
+            "Use this evidence as a high-priority cue when the question is about the target object's orientation or part direction.\n"
+        )
 
     messages = [
         {
@@ -1010,7 +1021,12 @@ def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_
                 {"type": "image", "image": image_path},
                 {
                     "type": "text",
-                    "text": f"Question: {instruction}\nScene graph: {json.dumps(scene_graph, indent=2)}\nAnswer:",
+                    "text": (
+                        f"Question: {instruction}"
+                        f"{stage5_block}\n"
+                        f"Scene graph: {json.dumps(scene_graph, indent=2, ensure_ascii=False)}\n"
+                        "Answer:"
+                    ),
                 },
             ],
         },

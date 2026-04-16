@@ -39,6 +39,11 @@ from serve.stage4_point_data import (
     sample_points,
     save_stage4_cache,
 )
+from serve.stage5_inference import inject_prediction_into_scene_graph, predict_from_stage4_dir
+from serve.spatialbench_stage5 import (
+    build_spatialbench_stage5_context,
+    classify_spatialbench_stage5_applicability,
+)
 
 warnings.filterwarnings("ignore")
 output_folder = str(runtime_paths.ensure_output_dir())
@@ -46,6 +51,7 @@ spatialbench_dir = runtime_paths.spatialbench_dataset_dir()
 parse_fn = None
 reason_fn = None
 PROGRESS_FILE = "eval_spatialbench_progress.json"
+STAGE5_OPTIONS = {}
 
 
 def resolve_llm_backend():
@@ -94,6 +100,29 @@ def parse_args():
         "--stage4-pointdata-only",
         action="store_true",
         help="Run Stage 4 point-data building from existing Stage 3 caches.",
+    )
+    parser.add_argument(
+        "--use-stage5-head",
+        action="store_true",
+        help="Inject the Stage 5 single-domain orientation head prediction from an existing Stage 4 cache into the full SpatialBench pipeline.",
+    )
+    parser.add_argument(
+        "--stage5-checkpoint",
+        type=str,
+        default=None,
+        help="Optional checkpoint path override for the Stage 5 orientation head.",
+    )
+    parser.add_argument(
+        "--stage5-device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device used for Stage 5 orientation head inference.",
+    )
+    parser.add_argument(
+        "--stage5-num-points",
+        type=int,
+        default=1024,
+        help="Number of points sampled before feeding the Stage 5 orientation head.",
     )
     return parser.parse_args()
 
@@ -759,6 +788,9 @@ def process_info(info):
     pcd = None
     scene_graph = None
     text = None
+    stage5_prediction = None
+    stage5_context = None
+    stage5_gate = None
 
     try:
         info = run_vlm_with_retry(parse_fn, prompt, image)
@@ -773,7 +805,37 @@ def process_info(info):
         scene_graph, _ = get_scene_graph(
             image, pcd, mask, info, object_names, orientation_model, output_folder=output_folder
         )
-        text = run_vlm_with_retry(reason_fn, prompt, ann_img, scene_graph, True)
+        if STAGE5_OPTIONS.get("enabled"):
+            stage5_gate = classify_spatialbench_stage5_applicability(question, parser_info=info)
+            if stage5_gate.get("applicable"):
+                stage5_prediction = predict_from_stage4_dir(
+                    Path(output_folder) / "stage4_spatialbench_point_cache" / str(id),
+                    dataset="spatialbench",
+                    checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
+                    device=STAGE5_OPTIONS.get("device", "auto"),
+                    num_points=STAGE5_OPTIONS.get("num_points", 1024),
+                )
+                if stage5_prediction:
+                    scene_graph = inject_prediction_into_scene_graph(scene_graph, stage5_prediction)
+                    stage5_context = build_spatialbench_stage5_context(question, stage5_gate, stage5_prediction)
+                    print(
+                        f"[spatialbench] sample {id} stage5 apply "
+                        f"category={stage5_gate.get('category')} "
+                        f"direction={stage5_prediction.get('direction_vector')}"
+                    )
+                else:
+                    print(
+                        f"[spatialbench] sample {id} stage5 skipped "
+                        f"category={stage5_gate.get('category')} "
+                        "reason=prediction unavailable"
+                    )
+            else:
+                print(
+                    f"[spatialbench] sample {id} stage5 skipped "
+                    f"category={stage5_gate.get('category')} "
+                    f"reason={stage5_gate.get('reason')}"
+                )
+        text = run_vlm_with_retry(reason_fn, prompt, ann_img, scene_graph, True, stage5_context)
 
         print(text)
         if ("A" == text[0] and answer == 0) or ("B" == text[0] and answer == 1) or ("C" == text[0] and answer == 2) or (
@@ -826,8 +888,16 @@ if __name__ == "__main__":
         def parse_fn(command, image):
             return qwen_vqa_parsing(qwen_model, processor, image, command)
 
-        def reason_fn(command, image, scene_graph, eval):
-            return qwen_vqa_spatial_reasoning(qwen_model, processor, image, command, scene_graph, eval=eval)
+        def reason_fn(command, image, scene_graph, eval, stage5_context=None):
+            return qwen_vqa_spatial_reasoning(
+                qwen_model,
+                processor,
+                image,
+                command,
+                scene_graph,
+                eval=eval,
+                stage5_context=stage5_context,
+            )
 
         def stage2_parse_fn(command, image):
             return qwen_stage2_part_parser(qwen_model, processor, image, command)
@@ -838,7 +908,7 @@ if __name__ == "__main__":
         def parse_fn(command, image):
             return chatgpt_vqa_parsing(command, image)
 
-        def reason_fn(command, image, scene_graph, eval):
+        def reason_fn(command, image, scene_graph, eval, stage5_context=None):
             return chatgpt_vqa_spatial_reasoning(image, command, scene_graph, eval=eval)
 
         def stage2_parse_fn(command, image):
@@ -858,6 +928,21 @@ if __name__ == "__main__":
     sam_model = sam.get_model()
     depth_model = depth_esti_model.get_model()
     orientation_model = orientation.get_model()
+    STAGE5_OPTIONS.clear()
+    STAGE5_OPTIONS.update(
+        {
+            "enabled": bool(args.use_stage5_head),
+            "checkpoint_path": args.stage5_checkpoint,
+            "device": args.stage5_device,
+            "num_points": args.stage5_num_points,
+        }
+    )
+    if STAGE5_OPTIONS["enabled"]:
+        print("[spatialbench] stage5_head=enabled")
+        if STAGE5_OPTIONS["checkpoint_path"]:
+            print(f"[spatialbench] stage5_checkpoint={STAGE5_OPTIONS['checkpoint_path']}")
+        print(f"[spatialbench] stage5_device={STAGE5_OPTIONS['device']}")
+        print(f"[spatialbench] stage5_num_points={STAGE5_OPTIONS['num_points']}")
 
     info_list = json.load(open(spatialbench_dir / "spatial_data.json"))
     total = len(info_list)
@@ -877,6 +962,9 @@ if __name__ == "__main__":
         print(f"[spatialbench] resuming from progress file with {len(processed_ids)} completed samples")
 
     pending_info_list = [sample for sample in info_list if sample["id"] not in processed_ids]
+    if args.limit is not None:
+        pending_info_list = pending_info_list[: args.limit]
+        print(f"[spatialbench] applying --limit {args.limit}, runnable samples reduced to {len(pending_info_list)}")
     print(f"[spatialbench] pending samples: {len(pending_info_list)}")
 
     if llm_backend == "qwen":

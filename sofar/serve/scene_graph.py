@@ -2,6 +2,10 @@ import os
 import numpy as np
 from serve import pointso
 from serve.utils import remove_outliers
+from open6dor.utils import canonical_object_key, normalize_object_name, resolve_orientation_template, load_orientation_templates
+
+
+_OPEN6DOR_ORIENTATION_TEMPLATES = load_orientation_templates()
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -38,6 +42,35 @@ def _filter_xyz_points(segmented_object):
     if filtered.size == 0:
         return segmented_object
     return filtered
+
+
+def _resolve_open6dor_object_index(object_names, picked_object_name):
+    if picked_object_name in object_names:
+        return object_names.index(picked_object_name)
+
+    canonical_target = canonical_object_key(picked_object_name)
+    if not canonical_target:
+        raise ValueError(f"Unable to resolve empty picked object against {object_names}")
+
+    alias_candidates = [canonical_target]
+    template = resolve_orientation_template(picked_object_name, _OPEN6DOR_ORIENTATION_TEMPLATES)
+    if template:
+        alias_candidates.extend(template.get("aliases", []))
+
+    alias_fallbacks = {
+        "usb": ["flash drive", "u disk", "thumb drive"],
+        "mobile phone": ["phone", "smartphone", "cell phone"],
+        "binder clips": ["binder clip", "clips"],
+    }
+    alias_candidates.extend(alias_fallbacks.get(canonical_target, []))
+    alias_candidates = {canonical_object_key(value) for value in alias_candidates if str(value or "").strip()}
+
+    for idx, name in enumerate(object_names):
+        if canonical_object_key(name) in alias_candidates:
+            return idx
+
+    normalized_names = [normalize_object_name(name) for name in object_names]
+    raise ValueError(f"{picked_object_name!r} is not in list after normalization. available={normalized_names}")
 
 
 def build_open6dor_lightweight_scene_graph(
@@ -81,7 +114,7 @@ def open6dor_scene_graph(
     save_debug_artifacts = _should_save_debug_artifacts(save_debug_artifacts)
 
     picked_object_name = info["picked_object"]
-    index = object_names.index(picked_object_name)
+    index = _resolve_open6dor_object_index(object_names, picked_object_name)
 
     object_mask = mask[index]
     segmented_object = pcd[object_mask]
@@ -174,7 +207,7 @@ def open6dor_scene_graph_for_mismatch_pcd(image, pcd, mask, info, object_names, 
     image = np.array(image)
 
     picked_object_name = info["picked_object"]
-    index = object_names.index(picked_object_name)
+    index = _resolve_open6dor_object_index(object_names, picked_object_name)
 
     # pcd size is not equal to mask size, use relative scale to get the mask
     object_mask = mask[index]

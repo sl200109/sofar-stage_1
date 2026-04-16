@@ -1,82 +1,89 @@
 {
-  "updated_at": "2026-04-15T23:20:00",
+  "updated_at": "2026-04-16T10:40:00",
   "tasks": [
     {
-      "id": "stage5_local_manifest_builder",
+      "id": "stage5_single_domain_open6dor_training",
+      "owner": "server",
+      "status": "done",
+      "title": "完成 Open6DOR-only Stage 5 训练与未见样本测试",
+      "notes": "best_val_loss=0.376927, test mean_cosine=0.289814, test mean_angle_deg=67.6826"
+    },
+    {
+      "id": "stage5_single_domain_spatialbench_training",
+      "owner": "server",
+      "status": "done",
+      "title": "完成 SpatialBench-only Stage 5 训练与未见样本测试",
+      "notes": "best_val_loss=0.223075, test mean_cosine=0.554985, test mean_angle_deg=49.1498"
+    },
+    {
+      "id": "stage5_combined_training",
+      "owner": "server",
+      "status": "done",
+      "title": "完成 Combined / Balanced / Filtered / Curriculum 试验",
+      "notes": "统一共享 head 的跨域训练当前阶段性判负，作为负结果链保留，不再优先继续"
+    },
+    {
+      "id": "stage5_local_single_domain_pipeline_integration",
       "owner": "local",
       "status": "done",
-      "title": "统一整理 Stage 4 manifest",
-      "notes": "manifest/dry-run 已在本地和云服务器跑通。"
+      "title": "完成单域最优 checkpoint 回接到 Open6DOR 和 SpatialBench pipeline",
+      "notes": "已新增 stage5_inference.py、runtime checkpoint 路径和 full pipeline 开关"
     },
     {
-      "id": "stage5_training_label_definition",
+      "id": "stage5_server_validate_open6dor_pipeline",
+      "owner": "server",
+      "status": "done",
+      "title": "验证 Open6DOR pipeline + Open6DOR-only best checkpoint",
+      "notes": "20-case smoke 已通过：20/20 success, stage5_applied=20/20, error_count=0, pipeline_mode=joint 覆盖 20/20"
+    },
+    {
+      "id": "stage5_server_validate_spatialbench_pipeline",
+      "owner": "server",
+      "status": "done",
+      "title": "验证 SpatialBench pipeline + SpatialBench-only best checkpoint",
+      "notes": "20-case smoke 已跑通，无错误；但当前 orientation_relative_accuracy=0.0, orientation_absolute_accuracy=0.0，需要转入效果诊断而不是继续扩量"
+    },
+    {
+      "id": "stage5_effect_test_open6dor",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 Open6DOR 单域回接后的效果测试",
+      "notes": "下一步先跑 100-case，继续收集 stage5_open6dor_pipeline_records.json / csv，并检查 target_orientation 与 result.json 的一致性"
+    },
+    {
+      "id": "stage5_effect_diagnose_spatialbench",
+      "owner": "local",
+      "status": "in_progress",
+      "title": "诊断 SpatialBench 单域回接后的 orientation 效果",
+      "notes": "当前 20-case 中 orientation_relative_accuracy=0.0, orientation_absolute_accuracy=0.0；已确认 scene graph 注入成功，但题型大量属于角度比较 / 开合角 / 平行关系 / 多对象角差 / 转弯计数，和当前单方向向量 head 不匹配。已补充 gating 和更强 prompt。"
+    },
+    {
+      "id": "stage5_normalize_open6dor_orientation_keys",
+      "owner": "local",
+      "status": "todo",
+      "title": "统一 Open6DOR stage5_target_orientation 键名",
+      "notes": "当前混有 upright / plug_right / silver plug end / bottom down / bottom_down 等风格，后续做严格效果对比前最好先归一化"
+    },
+    {
+      "id": "stage5_dataset_specific_conditioning",
+      "owner": "local",
+      "status": "todo",
+      "title": "设计 dataset-specific conditioning",
+      "notes": "仅在单域回接的效果测试收口后再考虑，不作为当前主线"
+    },
+    {
+      "id": "stage5_spatialbench_gating_design",
       "owner": "local",
       "status": "done",
-      "title": "定义 Stage 5 训练标签与 loss",
-      "notes": "已固定 primary/fallback label、train_label_confidence，以及 0.7*cosine + 0.3*smooth_l1 的加权方向 loss。"
+      "title": "为 SpatialBench 设计 Stage 5 适用题型筛选",
+      "notes": "已新增 spatialbench_stage5.py，并在 eval_spatialbench.py 中按题型与 parser 对象数做 gating；同时加入 Stage 5 专用 reasoning prompt 和语言化 orientation evidence。"
     },
     {
-      "id": "stage5_training_entry_ready",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Stage 5 训练与未见样本测试入口",
-      "notes": "stage5_train_pilot.py 与 stage5_eval_unseen.py 已准备好，并通过本地语法检查。"
-    },
-    {
-      "id": "stage5_expand_open6dor_stage4_cache",
-      "owner": "server",
-      "status": "done",
-      "title": "扩充 Open6DOR Stage 4 cache 到 100-case",
-      "notes": "当前 100/100 success，可直接作为第一轮训练数据源。"
-    },
-    {
-      "id": "stage5_expand_spatialbench_stage4_cache",
-      "owner": "server",
-      "status": "done",
-      "title": "扩充 SpatialBench Stage 4 cache 到 100-case",
-      "notes": "当前 97/100 success，3 条因缺失上游 Stage 3 cache 失败；先用 97 条成功样本进入训练。"
-    },
-    {
-      "id": "stage5_train_open6dor_pilot",
+      "id": "stage5_spatialbench_subset_smoke",
       "owner": "server",
       "status": "todo",
-      "title": "执行 Open6DOR-only tiny-train pilot",
-      "notes": "建议第一轮先做 Open6DOR-only，验证 orientation_mode 较明确时的收敛情况。"
-    },
-    {
-      "id": "stage5_eval_open6dor_unseen",
-      "owner": "server",
-      "status": "todo",
-      "title": "在未训练过的 Open6DOR test split 上测试",
-      "notes": "使用 stage5_eval_unseen.py 和 best checkpoint，在 test split 上记录 weighted_loss / mean_cosine / mean_angle_deg。"
-    },
-    {
-      "id": "stage5_train_spatialbench_pilot",
-      "owner": "server",
-      "status": "todo",
-      "title": "执行 SpatialBench-only tiny-train pilot",
-      "notes": "第二轮单独看 SpatialBench 的 functional_part / relation 多样性下是否仍稳定。"
-    },
-    {
-      "id": "stage5_eval_spatialbench_unseen",
-      "owner": "server",
-      "status": "todo",
-      "title": "在未训练过的 SpatialBench test split 上测试",
-      "notes": "使用 stage5_eval_unseen.py 在 SpatialBench test split 上记录方向指标。"
-    },
-    {
-      "id": "stage5_train_combined_pilot",
-      "owner": "server",
-      "status": "todo",
-      "title": "执行 Combined tiny-train pilot",
-      "notes": "在 Open6DOR-only 与 SpatialBench-only 都跑过后，再做 combined 训练。"
-    },
-    {
-      "id": "stage5_eval_combined_unseen",
-      "owner": "server",
-      "status": "todo",
-      "title": "在 combined 未训练样本上测试",
-      "notes": "对 combined 模型分别看 Open6DOR/SpatialBench 的 test split 表现。"
+      "title": "验证 SpatialBench 题型筛选后的 Stage 5 子集效果",
+      "notes": "下一步重新跑 SpatialBench 20-case smoke，重点观察日志中的 stage5 apply / stage5 skipped 分布，以及 orientation 准确率是否从 0.0 回升。"
     }
   ]
 }

@@ -1,122 +1,222 @@
-当前结论：
-1. `Stage 2` 已完成并关闭。
-2. `Stage 3` 已完成并关闭。
-3. `Stage 4` 已完成并关闭。
-4. `Stage 5 dry-run` 已完成并关闭。
-5. 现在已经不是“先补数据再说”的阶段，而是可以进入第一轮 `100-case` 级别 tiny-train pilot。
-6. 当前训练数据状态：
-   - `Open6DOR`: `100/100` 可用
-   - `SpatialBench`: `97/100` 可用
+2026-04-16 最新结论：
+1. `Open6DOR` 单域最优 head 已经成功接回完整 pipeline。
+2. `Open6DOR 20-case smoke` 已通过：
+   - `20/20 success`
+   - `stage5_applied = 20/20`
+   - `error_count = 0`
+   - 已在 `sofar/output/` 下生成：
+     - `stage5_open6dor_pipeline_records.json`
+     - `stage5_open6dor_pipeline_records.csv`
+3. `SpatialBench 20-case smoke` 也已经跑通，但当前效果不理想：
+   - `orientation_relative_accuracy = 0.0`
+   - `orientation_absolute_accuracy = 0.0`
+   - 说明工程接入是通的，但这版 head 对 `SpatialBench orientation` 暂时没有带来提升
+4. 所以下一步分成两条线：
+   - `Open6DOR`：开始做效果测试
+   - `SpatialBench`：先做效果诊断，不急着扩量
 
-以后上传统一按文件夹：
-1. 上传整个：
-`sofar/serve`
-2. 上传整个：
-`sofar/orientation`
-3. 上传整个：
-`sofar/open6dor`
+SpatialBench 当前为什么“链路通了，但没有 orientation 提升”：
+1. 现在这版 `Stage 5` head 训练出来的是“单个目标对象的 3D direction vector”
+2. 但 `SpatialBench` 当前这批 `orientation` 题大量不是这种任务，而是：
+   - 相机和地面的夹角
+   - 两个物体之间的角度差
+   - 门的开合角
+   - 两扇门是否平行
+   - 道路有几个转弯
+3. 这意味着：
+   - 我们的 head 输出空间和题目要求不一致
+   - 即使日志里出现了 `[spatialbench] sample <id> stage5 direction=[...]`
+   - 也不代表这个向量足以帮助 Qwen 回答这些题
+4. 额外还有两个结构问题：
+   - 多实例同名物体时，当前默认命中第一个同名节点
+   - `vqa_reasoning_prompt` 里 scene graph 只是“reference”，模型仍可能主要看图像
+5. 当前结论：
+   - 不要立刻把 `SpatialBench` 扩到 `100-case`
+   - 先做题型诊断和 gating，再决定如何继续
 
-## 本轮训练代码入口
-### 1. 训练入口
-`orientation/stage5_train_pilot.py`
+本地已完成的修复：
+1. 已新增 `SpatialBench` 题型筛选 helper：
+   - `sofar/serve/spatialbench_stage5.py`
+2. 已修改 `eval_spatialbench.py`：
+   - 不是所有题都启用 `Stage 5`
+   - 先按题型和 parser 输出判断是否适合
+   - 只有适合的子题才会调用 `predict_from_stage4_dir(...)`
+3. 已修改 `Stage 5` 注入方式：
+   - 不只注入数值向量
+   - 还会在 scene graph 中附加：
+     - `stage5_summary`
+     - `stage5_evidence.readable_summary`
+     - `stage5_evidence.axis_hint`
+4. 已新增更强的 `SpatialBench` reasoning prompt：
+   - `vqa_reasoning_stage5_prompt`
+   - 明确告诉模型：
+     - `stage5_head` 给的是 orientation evidence
+     - 对适用题型优先结合 scene graph orientation 与 `stage5_evidence`
+5. 当前按“只看问题文本”的粗筛统计：
+   - `orientation total = 96`
+   - `single_object_direction`：`14`
+   - `angle_or_relation`：`40`
+   - `count_or_quantity`：`21`
+   - `route_or_navigation`：`10`
+   - `unsupported_orientation_semantics`：`11`
+6. 这说明：
+   - 当前 `Stage 5` 只适合 `SpatialBench orientation` 里的一个小子集
+   - 后续不走“全量硬接”，而走“子集验证”
 
-### 2. 未训练样本测试入口
-`orientation/stage5_eval_unseen.py`
+下次上传哪些文件夹：
+1. `sofar/serve`
+2. `sofar/open6dor`
+3. `sofar/spatialbench`
 
-### 3. 当前训练标签与 loss
-1. 训练标签：
-   - primary：`geometry_priors.part_to_object_vector`
-   - fallback：`orientation_mode template axis`
-   - confidence：`train_label_confidence`
-2. 当前 loss：
-   - `0.7 * cosine_direction_loss + 0.3 * smooth_l1_direction_loss`
-   - 再乘 `train_label_confidence`
+说明：
+1. 这轮一般不需要重新上传 `sofar/orientation`，因为当前主线是推理接入与效果测试，不是继续训练。
+2. 如果云服务器上的 `orientation` 目录不是最近训练版，再补传 `sofar/orientation`。
 
-## 下一步执行顺序
-### 第一优先级：Open6DOR-only 训练
-在云服务器执行：
+下一步最高优先级：Open6DOR 效果测试
+先在云服务器继续跑大一点的 smoke：
 
 `cd /data/coding/SoFar`
 
-`python orientation/stage5_train_pilot.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train --dataset-mode open6dor --batch-size 4 --num-points 1024 --max-train-samples 72 --max-val-samples 16 --epochs 20 --device cuda`
+`python open6dor/open6dor_perception.py --limit 100 --reset-progress --rerun-existing --use-stage5-head --speed-profile conservative`
 
-训练完成后会产生：
-1. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_train_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_val_manifest.jsonl`
-3. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_test_manifest.jsonl`
-4. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_best.pth`
-5. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_last.pth`
-6. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_tiny_train_summary.json`
+说明：
+1. 这一步不是重新训练，而是扩大 `Open6DOR` 单域回接后的推理样本。
+2. 跑完后仍会在 `output/` 下集中生成：
+   - `stage5_open6dor_pipeline_records.json`
+   - `stage5_open6dor_pipeline_records.csv`
+3. 我们重点看：
+   - `stage5_applied`
+   - `error_count`
+   - `target_orientation`
+   - 每条样本最终 `result.json`
 
-未训练样本测试：
-`python orientation/stage5_eval_unseen.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train --checkpoint /data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_best.pth --dataset-mode open6dor --subset test --batch-size 4 --num-points 1024 --max-samples 24 --device cuda`
+Open6DOR 跑完后，同步这些回来：
+1. `sofar/output/stage5_open6dor_pipeline_records.json`
+2. `sofar/output/stage5_open6dor_pipeline_records.csv`
+3. 对应这轮 `open6dor_perception_*.log`
 
-测试结果文件：
-1. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_test_eval_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_open6dor_train/stage5_test_eval_summary.json`
+SpatialBench 当前先不要直接扩到 100-case。
+先保留现在这轮 20-case 结果，后续优先做原因诊断：
+1. 为什么日志里已经出现 `[spatialbench] sample <id> stage5 direction=[...]`
+2. 但 `orientation_relative_accuracy / orientation_absolute_accuracy` 仍然都是 `0.0`
+3. 当前最可能的根因是：
+   - 题型超出了“单方向向量 head”的能力边界
+   - 多实例同名目标的注入对象可能不对
+4. 必要时再和 baseline 做同样本对照
+5. 下一步如果继续做 SpatialBench，不是直接扩量，而是：
+   - 先筛出适合 `Stage 5` 的子题型
+   - 只在“单目标、单方向语义”的 orientation 问题上启用 `Stage 5`
+   - 对角度比较 / 平行 / 开合角 / 转弯数等题先保留原 pipeline
 
-## 第二优先级：SpatialBench-only 训练
-在云服务器执行：
+如果下一步开始重新测 SpatialBench：
+1. 下次上传的文件夹：
+   - `sofar/serve`
+   - `sofar/spatialbench`
+2. 服务器上重新跑：
 
-`python orientation/stage5_train_pilot.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_spatialbench_train --dataset-mode spatialbench --batch-size 4 --num-points 1024 --max-train-samples 72 --max-val-samples 16 --epochs 20 --device cuda`
+`cd /data/coding/SoFar`
 
-训练完成后会产生：
-1. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_train_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_val_manifest.jsonl`
-3. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_test_manifest.jsonl`
-4. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_pilot_best.pth`
-5. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_pilot_last.pth`
-6. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_tiny_train_summary.json`
+`python spatialbench/eval_spatialbench.py --limit 20 --reset-progress --use-stage5-head --speed-profile conservative`
 
-未训练样本测试：
-`python orientation/stage5_eval_unseen.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_spatialbench_train --checkpoint /data/coding/SoFar/output/stage5_spatialbench_train/stage5_pilot_best.pth --dataset-mode spatialbench --subset test --batch-size 4 --num-points 1024 --max-samples 24 --device cuda`
+3. 这轮重新跑后，日志里应该会出现两类新信号：
+   - `stage5 apply category=single_object_direction ...`
+   - `stage5 skipped category=... reason=...`
+4. 这一步的目标不是全量提升，而是验证：
+   - 题型筛选后，`Stage 5` 是否终于只在适合子集上介入
+   - `orientation` 准确率是否从 `0.0` 回升
 
-测试结果文件：
-1. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_test_eval_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_test_eval_summary.json`
+当前结论：
+1. `Stage 2` 已结束。
+2. `Stage 3` 已结束。
+3. `Stage 4` 已结束。
+4. `Stage 5` 训练结论已经收口：
+   - `Open6DOR-only` 成立，可作为 `Open6DOR` 单域最优 head。
+   - `SpatialBench-only` 成立，而且当前最好，可作为 `SpatialBench` 单域最优 head。
+   - `Combined / Balanced / Filtered / Curriculum` 都不成立，统一共享 head 的跨域训练当前阶段性判负。
+5. 本地代码已经完成“单域最优 checkpoint 回接各自 pipeline”。
 
-## 第三优先级：Combined 训练
-在 `Open6DOR-only` 和 `SpatialBench-only` 都完成后，再执行：
+下次上传哪些文件夹：
+1. `sofar/serve`
+2. `sofar/open6dor`
+3. `sofar/spatialbench`
 
-`python orientation/stage5_train_pilot.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_combined_train --dataset-mode combined --batch-size 4 --num-points 1024 --max-train-samples 128 --max-val-samples 32 --epochs 24 --device cuda`
+说明：
+1. 这轮不需要重新上传 `sofar/orientation`，因为本轮只改了推理接线，不改训练代码。
+2. 如果云服务器上的 `orientation` 目录不是最新训练版，再补传 `sofar/orientation`。
 
-训练完成后会产生：
-1. `/data/coding/SoFar/output/stage5_combined_train/stage5_train_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_combined_train/stage5_val_manifest.jsonl`
-3. `/data/coding/SoFar/output/stage5_combined_train/stage5_test_manifest.jsonl`
-4. `/data/coding/SoFar/output/stage5_combined_train/stage5_pilot_best.pth`
-5. `/data/coding/SoFar/output/stage5_combined_train/stage5_pilot_last.pth`
-6. `/data/coding/SoFar/output/stage5_combined_train/stage5_tiny_train_summary.json`
+默认 checkpoint 路径：
+1. `Open6DOR` 默认读取：
+   - `/data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_best.pth`
+2. `SpatialBench` 默认读取：
+   - `/data/coding/SoFar/output/stage5_spatialbench_train/stage5_pilot_best.pth`
 
-未训练样本测试：
-`python orientation/stage5_eval_unseen.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_combined_train --checkpoint /data/coding/SoFar/output/stage5_combined_train/stage5_pilot_best.pth --dataset-mode combined --subset test --batch-size 4 --num-points 1024 --max-samples 48 --device cuda`
+如果要手动指定 checkpoint，可以用：
+1. `--stage5-checkpoint <path>`
+2. 或环境变量：
+   - `SOFAR_STAGE5_OPEN6DOR_CKPT`
+   - `SOFAR_STAGE5_SPATIALBENCH_CKPT`
 
-测试结果文件：
-1. `/data/coding/SoFar/output/stage5_combined_train/stage5_test_eval_manifest.jsonl`
-2. `/data/coding/SoFar/output/stage5_combined_train/stage5_test_eval_summary.json`
+这轮代码新增的全流程开关：
+1. `Open6DOR`
+   - `--use-stage5-head`
+   - `--stage5-checkpoint`
+   - `--stage5-device`
+   - `--stage5-num-points`
+   - `--rerun-existing`
+2. `SpatialBench`
+   - `--use-stage5-head`
+   - `--stage5-checkpoint`
+   - `--stage5-device`
+   - `--stage5-num-points`
+   - full eval 现在也支持 `--limit`
 
-## 建议同步回本地的重点结果
-### Open6DOR-only
-1. `output/stage5_open6dor_train/stage5_tiny_train_summary.json`
-2. `output/stage5_open6dor_train/stage5_test_eval_summary.json`
+当前最优先要做的事：
+1. 在云服务器上验证：
+   - `SpatialBench pipeline + SpatialBench-only best checkpoint`
+2. `Open6DOR pipeline + Open6DOR-only best checkpoint` 这一轮已经完成：
+   - `20/20 success`
+   - `stage5_applied = 20/20`
+   - `error_count = 0`
+   - 已在 `output/` 下生成集中汇总：
+     - `stage5_open6dor_pipeline_records.json`
+     - `stage5_open6dor_pipeline_records.csv`
+3. 这一步不是重新训练，而是验证回接后的完整推理链是否稳定。
 
-### SpatialBench-only
-1. `output/stage5_spatialbench_train/stage5_tiny_train_summary.json`
-2. `output/stage5_spatialbench_train/stage5_test_eval_summary.json`
+建议先做小规模 smoke，再决定是否扩到更大：
 
-### Combined
-1. `output/stage5_combined_train/stage5_tiny_train_summary.json`
-2. `output/stage5_combined_train/stage5_test_eval_summary.json`
+SpatialBench 单域回接验证：
+`cd /data/coding/SoFar`
 
-## 说明
-1. 当前 `Open6DOR Stage 3/4` 已改成默认增量补跑，但这一轮已经不再是主操作重点。
-2. 当前重点已经切换到 `Stage 5` 训练与未训练样本测试。
-3. 如果时间有限，优先顺序是：
-   - `Open6DOR-only`
-   - `SpatialBench-only`
-   - `Combined`
+`python spatialbench/eval_spatialbench.py --limit 20 --reset-progress --use-stage5-head --speed-profile conservative`
 
-如果下次继续由我接手，我会直接做三件事：
-1. 分析三组 `stage5_tiny_train_summary.json`
-2. 比较三组 `stage5_test_eval_summary.json`
-3. 决定下一轮是继续扩数据，还是调整 loss / model / sampling
+说明：
+1. `--use-stage5-head` 会从 `output/stage4_spatialbench_point_cache/<id>` 读取点云。
+2. 预测结果不会直接替你生成最终答案，而是先注入 scene graph，再交给原来的 reasoning 入口。
+3. 这里用 `--reset-progress` 是为了确保重新跑，而不是沿用旧进度。
+
+如果小规模 smoke 通过，再扩一轮：
+1. `SpatialBench`
+   - `--limit 100 --reset-progress --use-stage5-head --speed-profile conservative`
+
+下次同步回本地时，重点同步这些内容：
+1. `Open6DOR`
+   - 已有：
+     - `output/stage5_open6dor_pipeline_records.json`
+     - `output/stage5_open6dor_pipeline_records.csv`
+   - 如需抽查，再同步若干任务目录下新的 `output/result.json`
+2. `SpatialBench`
+   - `eval_spatialbench_progress.json`
+   - 对应日志
+3. 如果你额外做了结果整理，也同步：
+   - `output` 里和本轮回接验证直接相关的 summary / log 文件
+
+当前不再优先做的事：
+1. 新的 mixed training 变体
+2. 新的 curriculum 变体
+3. `balanced + filtered` 组合试验
+
+如果下次继续由我接手，我会按这个顺序做：
+1. 检查 `Open6DOR` 单域回接是否真的改变了 `target_orientation`
+2. 检查 `SpatialBench` 单域回接是否真的进入了 scene graph
+3. 分析回接后完整 pipeline 的输出是否比 baseline 更稳定
+4. 只有单域回接验证稳定后，才考虑更后续的 `dataset-specific conditioning`

@@ -55,7 +55,12 @@ def parse_args():
     parser.add_argument("--weight-decay", type=float, default=1e-2)
     parser.add_argument("--max-train-samples", type=int, default=16)
     parser.add_argument("--max-val-samples", type=int, default=4)
+    parser.add_argument("--max-test-samples", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--balance-datasets", action="store_true")
+    parser.add_argument("--exclude-label-source", action="append", default=[])
+    parser.add_argument("--min-label-confidence", type=float, default=0.0)
+    parser.add_argument("--init-checkpoint", type=str, default="")
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -104,7 +109,77 @@ def _choose_manifests(summary: dict, dataset_mode: str):
     return chosen
 
 
-def _prepare_train_val_manifests(summary: dict, dataset_mode: str, output_dir: Path, max_train: int, max_val: int):
+def _filter_entries(entries, excluded_sources, min_label_confidence):
+    excluded_sources = {str(item) for item in (excluded_sources or []) if str(item).strip()}
+    filtered = []
+    for item in entries:
+        source = str(item.get("train_target_direction_source", "") or "")
+        confidence = float(item.get("train_label_confidence", 0.0) or 0.0)
+        if source in excluded_sources:
+            continue
+        if confidence < float(min_label_confidence):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _balance_entries(entries, total_cap: int):
+    dataset_groups = {}
+    for item in entries:
+        dataset_groups.setdefault(str(item.get("dataset", "unknown")), []).append(item)
+
+    if len(dataset_groups) <= 1:
+        return entries[:total_cap] if total_cap > 0 else entries
+
+    if total_cap > 0 and total_cap < len(dataset_groups):
+        raise RuntimeError(
+            f"Unable to balance {len(dataset_groups)} datasets with total_cap={total_cap}."
+        )
+
+    per_dataset_cap = min(len(group) for group in dataset_groups.values())
+    if total_cap > 0:
+        per_dataset_cap = min(per_dataset_cap, total_cap // len(dataset_groups))
+
+    balanced = []
+    for dataset_name in sorted(dataset_groups.keys()):
+        balanced.extend(dataset_groups[dataset_name][:per_dataset_cap])
+    return balanced
+
+
+def _entry_stats(entries):
+    dataset_counts = {}
+    label_source_counts = {}
+    confidences = []
+
+    for item in entries:
+        dataset = str(item.get("dataset", "unknown"))
+        dataset_counts[dataset] = dataset_counts.get(dataset, 0) + 1
+
+        source = str(item.get("train_target_direction_source", "unknown"))
+        label_source_counts[source] = label_source_counts.get(source, 0) + 1
+
+        confidence = float(item.get("train_label_confidence", 0.0) or 0.0)
+        confidences.append(confidence)
+
+    return {
+        "count": len(entries),
+        "dataset_counts": dataset_counts,
+        "label_source_counts": label_source_counts,
+        "mean_label_confidence": round(float(np.mean(confidences)) if confidences else 0.0, 6),
+    }
+
+
+def _prepare_train_val_manifests(
+    summary: dict,
+    dataset_mode: str,
+    output_dir: Path,
+    max_train: int,
+    max_val: int,
+    max_test: int,
+    balance_datasets: bool = False,
+    excluded_label_sources=None,
+    min_label_confidence: float = 0.0,
+):
     manifests = _choose_manifests(summary, dataset_mode)
     train_entries = []
     val_entries = []
@@ -119,13 +194,22 @@ def _prepare_train_val_manifests(summary: dict, dataset_mode: str, output_dir: P
         val_entries.extend(val_part)
         test_entries.extend(test_part)
 
+    train_entries = _filter_entries(train_entries, excluded_label_sources, min_label_confidence)
+    val_entries = _filter_entries(val_entries, excluded_label_sources, min_label_confidence)
+    test_entries = _filter_entries(test_entries, excluded_label_sources, min_label_confidence)
+
     if not val_entries and len(train_entries) > 1:
         val_entries = train_entries[-1:]
         train_entries = train_entries[:-1]
 
-    train_entries = train_entries[:max_train]
-    val_entries = val_entries[:max_val]
-    test_entries = test_entries[:max_val]
+    if dataset_mode == "combined" and balance_datasets:
+        train_entries = _balance_entries(train_entries, max_train)
+        val_entries = _balance_entries(val_entries, max_val)
+        test_entries = _balance_entries(test_entries, max_test)
+    else:
+        train_entries = train_entries[:max_train]
+        val_entries = val_entries[:max_val]
+        test_entries = test_entries[:max_test]
 
     train_manifest = output_dir / "stage5_train_manifest.jsonl"
     val_manifest = output_dir / "stage5_val_manifest.jsonl"
@@ -133,7 +217,19 @@ def _prepare_train_val_manifests(summary: dict, dataset_mode: str, output_dir: P
     _write_jsonl(train_manifest, train_entries)
     _write_jsonl(val_manifest, val_entries)
     _write_jsonl(test_manifest, test_entries)
-    return train_manifest, val_manifest, test_manifest, train_entries, val_entries, test_entries
+    return (
+        train_manifest,
+        val_manifest,
+        test_manifest,
+        train_entries,
+        val_entries,
+        test_entries,
+        {
+            "train": _entry_stats(train_entries),
+            "val": _entry_stats(val_entries),
+            "test": _entry_stats(test_entries),
+        },
+    )
 
 
 def _build_dataset(manifest_path: Path, subset: str, num_points: int, max_samples: int):
@@ -161,6 +257,11 @@ def _compute_weighted_direction_loss(pred_direction, target_direction, label_con
     return weighted.mean(), cosine
 
 
+def _finite_or_raise(name: str, tensor: torch.Tensor):
+    if not torch.isfinite(tensor).all():
+        raise ValueError(f"Non-finite values detected in {name}")
+
+
 def _evaluate(model, dataloader, device):
     model.eval()
     losses = []
@@ -185,6 +286,18 @@ def _evaluate(model, dataloader, device):
     }
 
 
+def _load_init_checkpoint(model, checkpoint_path: Path, device: str):
+    checkpoint_path = Path(checkpoint_path)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Missing init checkpoint: {checkpoint_path}")
+    payload = torch.load(checkpoint_path, map_location=device)
+    state_dict = payload.get("model")
+    if not state_dict:
+        raise RuntimeError(f"Checkpoint has no model state: {checkpoint_path}")
+    model.load_state_dict(state_dict, strict=True)
+    return payload
+
+
 def main():
     args = parse_args()
     set_seed(args.seed)
@@ -192,14 +305,27 @@ def main():
     repo_root = Path(args.repo_root).resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "output")
     output_dir.mkdir(parents=True, exist_ok=True)
+    max_test_samples = args.max_test_samples if args.max_test_samples > 0 else args.max_val_samples
 
     summaries = build_stage5_smoke_manifests(repo_root=repo_root, output_dir=output_dir)
-    train_manifest, val_manifest, test_manifest, train_entries, val_entries, test_entries = _prepare_train_val_manifests(
+    (
+        train_manifest,
+        val_manifest,
+        test_manifest,
+        train_entries,
+        val_entries,
+        test_entries,
+        manifest_stats,
+    ) = _prepare_train_val_manifests(
         summaries,
         args.dataset_mode,
         output_dir,
         args.max_train_samples,
         args.max_val_samples,
+        max_test_samples,
+        args.balance_datasets,
+        args.exclude_label_source,
+        args.min_label_confidence,
     )
 
     train_dataset = _build_dataset(train_manifest, "all", args.num_points, args.max_train_samples)
@@ -232,12 +358,16 @@ def main():
         max_tokens=32,
     )
     model = PartConditionedOrientationHead(model_config).to(device)
+    init_payload = None
+    if args.init_checkpoint:
+        init_payload = _load_init_checkpoint(model, Path(args.init_checkpoint), device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     epoch_logs = []
     best_val_loss = None
     best_ckpt_path = output_dir / "stage5_pilot_best.pth"
     last_ckpt_path = output_dir / "stage5_pilot_last.pth"
+    skipped_bad_batches = 0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -249,10 +379,24 @@ def main():
             label_confidence = batch["label_confidence"].to(device).squeeze(-1)
 
             optimizer.zero_grad(set_to_none=True)
-            pred_direction = model(points, batch["instruction"], priors)
-            cosine = torch.nn.functional.cosine_similarity(pred_direction, target_direction, dim=-1)
-            loss = ((1 - cosine) * label_confidence).mean()
+            try:
+                _finite_or_raise("points", points)
+                _finite_or_raise("priors", priors)
+                _finite_or_raise("target_direction", target_direction)
+                _finite_or_raise("label_confidence", label_confidence)
+                pred_direction = model(points, batch["instruction"], priors)
+                _finite_or_raise("pred_direction", pred_direction)
+                loss, _ = _compute_weighted_direction_loss(
+                    pred_direction,
+                    target_direction,
+                    label_confidence,
+                )
+                _finite_or_raise("loss", loss)
+            except ValueError:
+                skipped_bad_batches += 1
+                continue
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_losses.append(float(loss.item()))
 
@@ -319,6 +463,18 @@ def main():
         "last_checkpoint": str(last_ckpt_path),
         "best_val_loss": best_val_loss,
         "final_test_metrics": test_metrics,
+        "skipped_bad_batches": skipped_bad_batches,
+        "sampling_config": {
+            "balance_datasets": args.balance_datasets,
+            "exclude_label_source": list(args.exclude_label_source),
+            "min_label_confidence": float(args.min_label_confidence),
+            "max_train_samples": args.max_train_samples,
+            "max_val_samples": args.max_val_samples,
+            "max_test_samples": max_test_samples,
+        },
+        "init_checkpoint": str(Path(args.init_checkpoint).resolve()) if args.init_checkpoint else "",
+        "init_checkpoint_epoch": None if init_payload is None else init_payload.get("epoch"),
+        "manifest_stats": manifest_stats,
         "epoch_logs": epoch_logs,
         "label_definition": {
             "primary": "normalized geometry_priors.part_to_object_vector",
@@ -333,6 +489,7 @@ def main():
     }
 
     summary_path = output_dir / "stage5_tiny_train_summary.json"
+    summary["summary_path"] = str(summary_path)
     with summary_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 

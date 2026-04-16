@@ -31,9 +31,37 @@ def _resample_points(points: np.ndarray, target_count: int) -> np.ndarray:
     return points[indices]
 
 
+def _sanitize_points(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32)
+    if points.size == 0:
+        return points.reshape(0, 6)
+    points = np.nan_to_num(points, nan=0.0, posinf=0.0, neginf=0.0)
+    if points.ndim != 2:
+        points = points.reshape(-1, points.shape[-1] if points.ndim > 1 else 1)
+    finite_rows = np.isfinite(points).all(axis=1)
+    points = points[finite_rows]
+    return points.astype(np.float32, copy=False)
+
+
+def _sanitize_vector(values, size: int, default):
+    arr = np.asarray(values if values is not None else default, dtype=np.float32).reshape(-1)
+    if arr.size < size:
+        default_arr = np.asarray(default, dtype=np.float32).reshape(-1)
+        arr = np.concatenate([arr, default_arr[arr.size:size]], axis=0)
+    arr = arr[:size]
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    if size == 3:
+        norm = np.linalg.norm(arr)
+        if not np.isfinite(norm) or norm <= 1e-6:
+            arr = np.asarray(default, dtype=np.float32)
+        else:
+            arr = arr / norm
+    return arr.astype(np.float32, copy=False)
+
+
 def _compose_points(object_points: np.ndarray, part_points: Optional[np.ndarray], target_count: int) -> np.ndarray:
-    object_points = np.asarray(object_points, dtype=np.float32)
-    part_points = np.asarray(part_points, dtype=np.float32) if part_points is not None else np.zeros((0, 6), dtype=np.float32)
+    object_points = _sanitize_points(object_points)
+    part_points = _sanitize_points(part_points) if part_points is not None else np.zeros((0, 6), dtype=np.float32)
 
     if len(part_points) == 0:
         return _resample_points(object_points, target_count)
@@ -78,19 +106,21 @@ class Stage4PointCacheDataset(data.Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         entry = self.entries[idx]
-        object_points = np.load(entry["object_points_path"])["points"].astype(np.float32)
+        object_points = _sanitize_points(np.load(entry["object_points_path"])["points"].astype(np.float32))
         part_points_path = entry.get("part_points_path")
         part_points = None
         if part_points_path and Path(part_points_path).exists():
-            part_points = np.load(part_points_path)["points"].astype(np.float32)
+            part_points = _sanitize_points(np.load(part_points_path)["points"].astype(np.float32))
 
         points = _compose_points(object_points, part_points, self.num_points)
-        target_direction = np.asarray(
+        target_direction = _sanitize_vector(
             entry.get("train_target_direction", entry.get("target_direction", [0.0, 0.0, 1.0])),
-            dtype=np.float32,
+            3,
+            [0.0, 0.0, 1.0],
         )
-        prior_vector = np.asarray(entry.get("prior_vector", [0.0] * 8), dtype=np.float32)
-        label_confidence = np.asarray([entry.get("train_label_confidence", 1.0)], dtype=np.float32)
+        prior_vector = _sanitize_vector(entry.get("prior_vector", [0.0] * 8), 8, [0.0] * 8)
+        label_confidence = _sanitize_vector([entry.get("train_label_confidence", 1.0)], 1, [1.0])
+        label_confidence[0] = float(np.clip(label_confidence[0], 0.0, 1.0))
 
         return {
             "points": torch.from_numpy(points).float(),

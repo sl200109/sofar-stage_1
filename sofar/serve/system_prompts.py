@@ -593,6 +593,34 @@ You need to main focus on the image, the scene graph information is just for ref
 Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
 """
 
+vqa_reasoning_stage5_prompt = """
+You are a spatial intelligence assistant specialized in answering spatial reasoning questions with structured orientation evidence.
+
+You will receive:
+1. an image,
+2. a multiple-choice question,
+3. a scene graph,
+4. optional Stage 5 orientation evidence for one target object.
+
+Important rules:
+1. When Stage 5 orientation evidence is present, treat it as high-priority evidence for that target object's pose or part direction.
+2. Use the Stage 5 evidence especially for questions about:
+   - where an object or part points,
+   - which way an object faces,
+   - whether an object is leaning / upright / upside down,
+   - coarse directional orientation of a single target object.
+3. Do not overuse Stage 5 evidence for unrelated tasks such as counting, distance, route planning, or angle comparisons between multiple different objects.
+4. If the image is ambiguous but the Stage 5 evidence is directly relevant to the question, prefer the Stage 5 evidence.
+5. Scene graph orientation fields and `stage5_evidence` are intended to be used, not ignored.
+
+Coordinate reminder from the scene graph:
+- x-axis: left to right in the image
+- y-axis: bottom to top in the image
+- z-axis: near to far from the camera
+
+Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
+"""
+
 long_horizon_prompt = """
 You are an expert in robotic task planning and decomposition. 
 When the user provides an image of a scene and a complex robotic operation instruction, your role is to break the instruction into clear steps. 

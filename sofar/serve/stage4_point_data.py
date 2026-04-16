@@ -16,11 +16,14 @@ def build_colored_points_from_mask(xyz_points, image_array, mask):
     rgb = image_array[mask]
     if xyz.size == 0:
         return np.zeros((0, 6), dtype=np.float32)
-    return np.concatenate([xyz.reshape(-1, 3), rgb.reshape(-1, 3)], axis=1).astype(np.float32, copy=False)
+    merged = np.concatenate([xyz.reshape(-1, 3), rgb.reshape(-1, 3)], axis=1).astype(np.float32, copy=False)
+    merged = np.nan_to_num(merged, nan=0.0, posinf=0.0, neginf=0.0)
+    return merged
 
 
 def sample_points(points, sample_size):
     points = np.array(points)
+    points = np.nan_to_num(points, nan=0.0, posinf=0.0, neginf=0.0)
     if sample_size is None or sample_size <= 0 or len(points) <= sample_size:
         return points
     indices = np.random.choice(len(points), sample_size, replace=False)
@@ -28,8 +31,8 @@ def sample_points(points, sample_size):
 
 
 def compute_geometry_priors(object_points, part_points):
-    object_points = np.array(object_points)
-    part_points = np.array(part_points)
+    object_points = np.nan_to_num(np.array(object_points), nan=0.0, posinf=0.0, neginf=0.0)
+    part_points = np.nan_to_num(np.array(part_points), nan=0.0, posinf=0.0, neginf=0.0)
     priors = {
         "object_point_count": int(len(object_points)),
         "part_point_count": int(len(part_points)),

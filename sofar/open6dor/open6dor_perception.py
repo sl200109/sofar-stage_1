@@ -48,6 +48,7 @@ from serve.stage4_point_data import (
     sample_points,
     save_stage4_cache,
 )
+from serve.stage5_inference import predict_from_stage4_dir
 
 warnings.filterwarnings("ignore")
 open6dor_parsing_fn = None
@@ -59,6 +60,7 @@ sam_model = None
 orientation_model = None
 RUN_RECORDS = []
 RUN_OPTIONS = {}
+STAGE5_OPTIONS = {}
 ORIENTATION_TEMPLATES = {}
 DEFAULT_PROGRESS_FILE = "open6dor_perception_progress.json"
 DEFAULT_SUMMARY_FILE = "open6dor_perception_summary.json"
@@ -126,6 +128,11 @@ def parse_args():
         help="Ignore the current mode's progress file and start this run fresh.",
     )
     parser.add_argument(
+        "--rerun-existing",
+        action="store_true",
+        help="Do not skip tasks that already have output/result.json during full-pipeline runs.",
+    )
+    parser.add_argument(
         "--stage2-parser-only",
         action="store_true",
         help="Run Stage 2 fast parser smoke only and export structured parser outputs.",
@@ -139,6 +146,29 @@ def parse_args():
         "--stage4-pointdata-only",
         action="store_true",
         help="Run Stage 4 point-data building from existing Stage 3 caches.",
+    )
+    parser.add_argument(
+        "--use-stage5-head",
+        action="store_true",
+        help="Use the Stage 5 single-domain orientation head from an existing Stage 4 cache during full-pipeline inference.",
+    )
+    parser.add_argument(
+        "--stage5-checkpoint",
+        type=str,
+        default=None,
+        help="Optional checkpoint path override for the Stage 5 orientation head.",
+    )
+    parser.add_argument(
+        "--stage5-device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device used for Stage 5 orientation head inference.",
+    )
+    parser.add_argument(
+        "--stage5-num-points",
+        type=int,
+        default=1024,
+        help="Number of points sampled before feeding the Stage 5 orientation head.",
     )
     return parser.parse_args()
 
@@ -360,6 +390,94 @@ def filter_pending_stage_cache_tasks(dataset_paths, stage_name):
     return pending, skipped
 
 
+def _summarize_xyz_points(xyz_points):
+    xyz_points = np.asarray(xyz_points, dtype=np.float32)
+    if xyz_points.size == 0:
+        raise ValueError("Cannot summarize empty xyz points")
+    xyz_points = xyz_points.reshape(-1, 3)
+    min_values = xyz_points.min(axis=0)
+    max_values = xyz_points.max(axis=0)
+    mean_values = xyz_points.mean(axis=0)
+    center = [round(float(mean_values[0]), 2), round(float(mean_values[1]), 2), round(float(mean_values[2]), 2)]
+    center_str = f"x: {mean_values[0]:.2f}, y: {mean_values[1]:.2f}, z: {mean_values[2]:.2f}"
+    bbox = [
+        [float(min_values[0]), float(max_values[0])],
+        [float(min_values[1]), float(max_values[1])],
+        [float(min_values[2]), float(max_values[2])],
+    ]
+    bbox_str = {
+        "x_min ~ x_max": f"{min_values[0]:.2f} ~ {max_values[0]:.2f}",
+        "y_min ~ y_max": f"{min_values[1]:.2f} ~ {max_values[1]:.2f}",
+        "z_min ~ z_max": f"{min_values[2]:.2f} ~ {max_values[2]:.2f}",
+    }
+    return center, center_str, bbox, bbox_str
+
+
+def _predict_cached_orientation(colored_object_pcd, direction_attributes, orientation_model):
+    orientation_dict = {}
+    attrs = [str(value).strip() for value in (direction_attributes or []) if str(value or "").strip()]
+    if not attrs or colored_object_pcd is None or len(colored_object_pcd) == 0:
+        return orientation_dict
+    try:
+        pred = orientation.pred_orientation(orientation_model, colored_object_pcd, attrs)
+        for idx, attribute in enumerate(attrs):
+            orientation_dict[attribute] = pred[idx]
+    except Exception as exc:
+        print(f"[open6dor] cached orientation fallback skipped: {exc}")
+    return orientation_dict
+
+
+def _build_other_objects_info_from_scene(image, pcd, mask, object_names):
+    image_np = np.array(image)
+    other_objects_info = []
+    if mask is None:
+        return other_objects_info
+    for idx, object_name in enumerate(object_names):
+        object_mask = mask[idx]
+        segmented_object = pcd[object_mask]
+        if segmented_object.size == 0:
+            continue
+        center, center_str, _, bbox_str = _summarize_xyz_points(segmented_object)
+        node = {
+            "object name": object_name,
+            "center": center_str,
+            "bounding box": bbox_str,
+        }
+        other_objects_info.append(node)
+    return other_objects_info
+
+
+def _build_cached_picked_object_fallback(task_dir, image, pcd, mask, object_names, parsed_info, orientation_model):
+    stage4_dir = Path(task_dir) / "output" / "stage4"
+    object_points_path = stage4_dir / "object_points.npz"
+    if not object_points_path.exists():
+        raise FileNotFoundError(f"Stage 4 object_points cache is missing at {object_points_path}")
+
+    object_points = np.load(object_points_path)["points"].astype(np.float32)
+    if object_points.size == 0:
+        raise ValueError(f"Stage 4 object_points cache is empty at {object_points_path}")
+
+    xyz_points = object_points[:, :3]
+    center, center_str, bbox, bbox_str = _summarize_xyz_points(xyz_points)
+    picked_object_name = str(parsed_info.get("picked_object", "")).strip() or "object"
+    direction_attributes = parsed_info.get("direction_attributes", [])
+    orientation_dict = _predict_cached_orientation(object_points, direction_attributes, orientation_model)
+
+    picked_object_dict = {
+        "object name": picked_object_name,
+        "center": center,
+        "bounding box": bbox,
+        "orientation": orientation_dict,
+    }
+    picked_object_info = {
+        "object name": picked_object_name,
+        "center": center_str,
+        "bounding box": bbox_str,
+    }
+    other_objects_info = _build_other_objects_info_from_scene(image, pcd, mask, object_names)
+    return picked_object_info, other_objects_info, picked_object_dict
+
+
 def discover_task_dirs(dataset_root):
     config_files = sorted(Path(dataset_root).rglob("task_config_new5.json"))
     task_dirs = []
@@ -418,7 +536,7 @@ def build_run_context(args, dataset_root):
     else:
         artifact_tag = None
         run_mode = "full"
-        rerun_existing = False
+        rerun_existing = bool(args.rerun_existing)
 
     progress_name, summary_name, log_prefix = mode_files(artifact_tag)
     dataset_paths = load_task_list(task_list_path, dataset_root) if task_list_path is not None else discover_task_dirs(dataset_root)
@@ -603,6 +721,8 @@ def process_dataset(task_dir):
     failed_stage = None
     perception_cache_hit = False
     pipeline_mode = "legacy"
+    stage5_prediction = None
+    stage5_fallback_scene_graph_used = False
 
     def record_stage(name, fn):
         nonlocal failed_stage
@@ -614,6 +734,34 @@ def process_dataset(task_dir):
             return result
         except Exception:
             stage_times[f"{name}_sec"] = round(time.perf_counter() - stage_start, 2)
+            raise
+
+    def run_scene_graph_with_fallback(parsed_info_for_perception, image_for_scene, mask_for_scene, object_names_for_scene):
+        nonlocal stage5_fallback_scene_graph_used
+        try:
+            return open6dor_scene_graph(
+                image_for_scene,
+                pcd,
+                mask_for_scene,
+                parsed_info_for_perception,
+                object_names_for_scene,
+                orientation_model,
+                output_folder=output_path,
+                save_debug_artifacts=RUN_OPTIONS["save_debug_artifacts"],
+            )
+        except ValueError as exc:
+            if STAGE5_OPTIONS.get("enabled") and "is not in list" in str(exc):
+                print(f"[open6dor] using Stage 4 cache fallback scene graph for {task_dir}: {exc}")
+                stage5_fallback_scene_graph_used = True
+                return _build_cached_picked_object_fallback(
+                    task_dir,
+                    image_for_scene,
+                    pcd,
+                    mask_for_scene,
+                    object_names_for_scene,
+                    parsed_info_for_perception,
+                    orientation_model,
+                )
             raise
 
     try:
@@ -685,16 +833,7 @@ def process_dataset(task_dir):
             )
             picked_object_info, other_objects_info, picked_object_dict = record_stage(
                 "scene_graph",
-                lambda: open6dor_scene_graph(
-                    preprocessed_image,
-                    pcd,
-                    mask,
-                    parsed_info,
-                    object_names,
-                    orientation_model,
-                    output_folder=output_path,
-                    save_debug_artifacts=RUN_OPTIONS["save_debug_artifacts"],
-                ),
+                lambda: run_scene_graph_with_fallback(parsed_info, preprocessed_image, mask, object_names),
             )
             if "rot" not in task_dir:
                 response = record_stage(
@@ -716,6 +855,7 @@ def process_dataset(task_dir):
         parsed_info = None
         picked_object_dict = None
         target_position = None
+        lightweight_scene_graph = None
         use_joint_path = llm_backend == "qwen"
         object_context = build_joint_object_context(task_info, prompt)
         if not object_context["picked_object"] or object_context["fallback_required"]:
@@ -766,16 +906,7 @@ def process_dataset(task_dir):
                     )
                     picked_object_info, other_objects_info, picked_object_dict = record_stage(
                         "scene_graph",
-                        lambda: open6dor_scene_graph(
-                            preprocessed_image,
-                            pcd,
-                            mask,
-                            parsed_info_for_perception,
-                            object_names,
-                            orientation_model,
-                            output_folder=output_path,
-                            save_debug_artifacts=RUN_OPTIONS["save_debug_artifacts"],
-                        ),
+                        lambda: run_scene_graph_with_fallback(parsed_info_for_perception, preprocessed_image, mask, object_names),
                     )
                     lightweight_scene_graph = build_open6dor_lightweight_scene_graph(
                         picked_object_info,
@@ -838,10 +969,38 @@ def process_dataset(task_dir):
         init_orientation = picked_object_dict["orientation"]
         target_orientation = parsed_info["target_orientation"]
 
-        if len(target_orientation) > 0 and target_orientation.keys() == init_orientation.keys():
-            direction_attributes = target_orientation.keys()
-            init_directions = [init_orientation[direction] for direction in direction_attributes]
-            target_directions = [target_orientation[direction] for direction in direction_attributes]
+        if STAGE5_OPTIONS.get("enabled"):
+            stage5_start = time.perf_counter()
+            try:
+                stage5_prediction = predict_from_stage4_dir(
+                    Path(task_dir) / "output" / "stage4",
+                    dataset="open6dor",
+                    checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
+                    device=STAGE5_OPTIONS.get("device", "auto"),
+                    num_points=STAGE5_OPTIONS.get("num_points", 1024),
+                )
+                if stage5_prediction and stage5_prediction.get("target_orientation"):
+                    target_orientation = stage5_prediction["target_orientation"]
+                    parsed_info["target_orientation"] = target_orientation
+                    print(f"[open6dor] stage5 target_orientation={target_orientation}")
+                    if lightweight_scene_graph is not None:
+                        lightweight_scene_graph["stage5_head"] = stage5_prediction
+                        if isinstance(lightweight_scene_graph.get("picked_object"), dict):
+                            lightweight_scene_graph["picked_object"]["stage5_head"] = stage5_prediction
+                            lightweight_scene_graph["picked_object"]["target_orientation"] = target_orientation
+                stage_times["stage5_head_sec"] = round(time.perf_counter() - stage5_start, 2)
+            except Exception as exc:
+                stage5_prediction = {
+                    "status": "error",
+                    "error": str(exc),
+                }
+                stage_times["stage5_head_sec"] = round(time.perf_counter() - stage5_start, 2)
+                print(f"[open6dor] stage5 head skipped for {task_dir}: {exc}")
+
+        common_directions = [direction for direction in target_orientation.keys() if direction in init_orientation]
+        if common_directions:
+            init_directions = [init_orientation[direction] for direction in common_directions]
+            target_directions = [target_orientation[direction] for direction in common_directions]
             transform_matrix = generate_rotation_matrix(np.array(init_directions), np.array(target_directions)).tolist()
         else:
             transform_matrix = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
@@ -854,6 +1013,7 @@ def process_dataset(task_dir):
             "init_orientation": init_orientation,
             "target_orientation": target_orientation,
             "transform_matrix": transform_matrix,
+            "stage5_head": stage5_prediction,
         }
         with open(os.path.join(output_path, "result.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=4, ensure_ascii=False)
@@ -867,6 +1027,14 @@ def process_dataset(task_dir):
             "total_sec": elapsed,
             "perception_cache_hit": perception_cache_hit,
             "pipeline_mode": pipeline_mode,
+            "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
+            "stage5_applied": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+            "stage5_checkpoint": (stage5_prediction or {}).get("checkpoint_path"),
+            "stage5_direction_attributes": (stage5_prediction or {}).get("direction_attributes", []),
+            "stage5_direction_vector": (stage5_prediction or {}).get("direction_vector"),
+            "stage5_target_orientation": (stage5_prediction or {}).get("target_orientation"),
+            "stage5_head": stage5_prediction,
+            "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
             **stage_times,
         }
 
@@ -882,6 +1050,14 @@ def process_dataset(task_dir):
             "failed_stage": failed_stage,
             "perception_cache_hit": perception_cache_hit,
             "pipeline_mode": pipeline_mode,
+            "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
+            "stage5_applied": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+            "stage5_checkpoint": (stage5_prediction or {}).get("checkpoint_path"),
+            "stage5_direction_attributes": (stage5_prediction or {}).get("direction_attributes", []),
+            "stage5_direction_vector": (stage5_prediction or {}).get("direction_vector"),
+            "stage5_target_orientation": (stage5_prediction or {}).get("target_orientation"),
+            "stage5_head": stage5_prediction,
+            "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
             **stage_times,
         }
 
@@ -892,6 +1068,77 @@ def write_csv_records(csv_path, records, fieldnames):
         writer.writeheader()
         for row in records:
             writer.writerow({field: row.get(field) for field in fieldnames})
+
+
+def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
+    records = summary.get("records", []) or []
+    export_records = []
+    for record in records:
+        stage5_head = record.get("stage5_head")
+        if not stage5_head and not record.get("stage5_enabled"):
+            continue
+        export_records.append(
+            {
+                "task_dir": record.get("task_dir"),
+                "status": record.get("status"),
+                "pipeline_mode": record.get("pipeline_mode"),
+                "failed_stage": record.get("failed_stage"),
+                "result_file": record.get("result_file"),
+                "stage5_enabled": record.get("stage5_enabled"),
+                "stage5_applied": record.get("stage5_applied"),
+                "stage5_checkpoint": record.get("stage5_checkpoint"),
+                "stage5_direction_attributes": json.dumps(record.get("stage5_direction_attributes", []), ensure_ascii=False),
+                "stage5_direction_vector": json.dumps(record.get("stage5_direction_vector"), ensure_ascii=False),
+                "stage5_target_orientation": json.dumps(record.get("stage5_target_orientation"), ensure_ascii=False),
+                "stage5_fallback_scene_graph_used": record.get("stage5_fallback_scene_graph_used"),
+                "elapsed_sec": record.get("elapsed_sec"),
+                "error": record.get("error"),
+            }
+        )
+
+    if not export_records:
+        return None
+
+    export_summary = {
+        "mode": "stage5_open6dor_pipeline_integration",
+        "run_id": run_id,
+        "run_mode": run_context.get("run_mode"),
+        "artifact_tag": run_context.get("artifact_tag"),
+        "speed_profile": run_context.get("speed_profile"),
+        "total_records": len(export_records),
+        "applied_count": sum(1 for item in export_records if item.get("stage5_applied")),
+        "error_count": sum(1 for item in export_records if item.get("status") == "error"),
+        "records": export_records,
+    }
+    stable_name = (
+        f"stage5_open6dor_pipeline_records_{run_context['artifact_tag']}.json"
+        if run_context.get("artifact_tag")
+        else "stage5_open6dor_pipeline_records.json"
+    )
+    stable_path, _ = write_json_outputs(export_summary, output_dir, stable_name, run_id)
+    csv_path = stable_path.with_suffix(".csv")
+    write_csv_records(
+        csv_path,
+        export_records,
+        [
+            "task_dir",
+            "status",
+            "pipeline_mode",
+            "failed_stage",
+            "result_file",
+            "stage5_enabled",
+            "stage5_applied",
+            "stage5_checkpoint",
+            "stage5_direction_attributes",
+            "stage5_direction_vector",
+            "stage5_target_orientation",
+            "stage5_fallback_scene_graph_used",
+            "elapsed_sec",
+            "error",
+        ],
+    )
+    print(f"[batch-log] wrote {csv_path}")
+    return stable_path
 
 
 def run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context):
@@ -1571,6 +1818,21 @@ if __name__ == "__main__":
     print(f"[open6dor] save_debug_artifacts={RUN_OPTIONS['save_debug_artifacts']}")
     print(f"[open6dor] prefer_single_mask={RUN_OPTIONS['prefer_single_mask']}")
     print(f"[open6dor] use_perception_cache={RUN_OPTIONS['use_perception_cache']}")
+    STAGE5_OPTIONS.clear()
+    STAGE5_OPTIONS.update(
+        {
+            "enabled": bool(args.use_stage5_head),
+            "checkpoint_path": args.stage5_checkpoint,
+            "device": args.stage5_device,
+            "num_points": args.stage5_num_points,
+        }
+    )
+    if STAGE5_OPTIONS["enabled"]:
+        print(f"[open6dor] stage5_head=enabled")
+        if STAGE5_OPTIONS["checkpoint_path"]:
+            print(f"[open6dor] stage5_checkpoint={STAGE5_OPTIONS['checkpoint_path']}")
+        print(f"[open6dor] stage5_device={STAGE5_OPTIONS['device']}")
+        print(f"[open6dor] stage5_num_points={STAGE5_OPTIONS['num_points']}")
 
     pending_dataset_paths = [p for p in dataset_paths if p not in processed_task_dirs]
     skipped_existing = []
@@ -1610,3 +1872,5 @@ if __name__ == "__main__":
 
     summary = save_progress(output_dir, run_id, dataset_root, dataset_paths, run_context)
     write_json_outputs(summary, output_dir, run_context["summary_name"], run_id)
+    if STAGE5_OPTIONS.get("enabled"):
+        write_stage5_integration_outputs(output_dir, run_id, summary, run_context)
