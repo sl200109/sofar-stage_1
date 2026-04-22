@@ -45,12 +45,6 @@ from serve.spatialbench_stage5 import (
     build_spatialbench_stage5_context,
     classify_spatialbench_stage5_applicability,
 )
-from serve.agent_debug import summarize_agent_records, write_agent_trace_bundle
-from serve.semantic_orientation_agent import (
-    decide_auto_agent_route,
-    decide_spatialbench_agent_action,
-    verify_spatialbench_agent_outcome,
-)
 
 warnings.filterwarnings("ignore")
 output_folder = str(runtime_paths.ensure_output_dir())
@@ -59,38 +53,6 @@ parse_fn = None
 reason_fn = None
 PROGRESS_FILE = "eval_spatialbench_progress.json"
 STAGE5_OPTIONS = {}
-AGENT_OPTIONS = {}
-SPATIALBENCH_STAGE5_CATEGORIES = [
-    "single_object_direction",
-    "single_object_axis_direction",
-    "single_object_reference_alignment",
-    "single_object_camera_alignment",
-    "count_or_quantity",
-    "angle_or_relation",
-    "route_or_navigation",
-    "unsupported_orientation_semantics",
-    "multi_object_or_ambiguous_target",
-    "target_selection_or_relation",
-]
-SPATIALBENCH_STAGE5_CATEGORY_ALIASES = {
-    "single_object_direction": {
-        "single_object_axis_direction",
-        "single_object_reference_alignment",
-        "single_object_camera_alignment",
-    },
-}
-SPATIALBENCH_NAMED_PILOTS = {
-    "stage5_applicable14": ROOT_DIR / "spatialbench" / "pilots" / "stage5_applicable14.json",
-}
-
-
-def spatialbench_category_matches(filter_value, category):
-    if filter_value == "all":
-        return True
-    allowed = SPATIALBENCH_STAGE5_CATEGORY_ALIASES.get(filter_value)
-    if allowed:
-        return str(category or "").strip() in allowed
-    return str(category or "").strip() == filter_value
 
 
 def resolve_llm_backend():
@@ -102,25 +64,6 @@ def resolve_llm_backend():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    sample_group = parser.add_mutually_exclusive_group()
-    sample_group.add_argument(
-        "--pilot",
-        choices=sorted(SPATIALBENCH_NAMED_PILOTS.keys()),
-        default=None,
-        help="Run a named SpatialBench pilot subset instead of the full dataset order.",
-    )
-    sample_group.add_argument(
-        "--sample-id-file",
-        type=str,
-        default=None,
-        help="Path to a JSON or newline-delimited file containing SpatialBench sample ids to run.",
-    )
-    sample_group.add_argument(
-        "--sample-ids",
-        type=str,
-        default=None,
-        help="Comma-separated SpatialBench sample ids to run.",
-    )
     parser.add_argument(
         "--recover-log",
         type=str,
@@ -148,15 +91,6 @@ def parse_args():
         type=int,
         default=None,
         help="Only process the first N samples. Primarily used with --stage2-parser-only.",
-    )
-    parser.add_argument(
-        "--stage5-category-filter",
-        choices=["all", *SPATIALBENCH_STAGE5_CATEGORIES],
-        default="all",
-        help=(
-            "Optional question-level Stage 5 applicability filter applied before --limit. "
-            "Useful for SpatialBench targeted smoke such as single_object_direction or the rule_v2 subcategories."
-        ),
     )
     parser.add_argument(
         "--stage3-grounding-only",
@@ -190,39 +124,6 @@ def parse_args():
         type=int,
         default=1024,
         help="Number of points sampled before feeding the Stage 5 orientation head.",
-    )
-    parser.add_argument(
-        "--agent-mode",
-        choices=["off", "dataset", "auto"],
-        default=None,
-        help="Agent control mode. Defaults to dataset when --use-stage5-head is enabled, otherwise off.",
-    )
-    parser.add_argument(
-        "--agent-policy",
-        type=str,
-        default="rule_v2",
-        help="Agent policy label written into logs and debug traces.",
-    )
-    parser.add_argument(
-        "--agent-save-trace",
-        action="store_true",
-        help="Write centralized agent traces to output/agent_debug/...",
-    )
-    parser.add_argument(
-        "--agent-debug-dir",
-        type=str,
-        default=None,
-        help="Optional debug root override. The final path will still be grouped as <root>/spatialbench/<run_id>/.",
-    )
-    parser.add_argument(
-        "--agent-shadow-eval",
-        action="store_true",
-        help="Reserved for a future shadow path. SpatialBench v1 keeps this flag for interface parity only.",
-    )
-    parser.add_argument(
-        "--agent-extended-actions",
-        action="store_true",
-        help="Reserved hook for ROI rebuild / part-first fallback. SpatialBench v1 records the flag but does not execute extra actions.",
     )
     return parser.parse_args()
 
@@ -324,18 +225,15 @@ def load_progress(reset_progress=False):
     return result, processed_ids
 
 
-def update_result(result, flag, task_type, question_type, sample_id, error=None, metadata=None):
+def update_result(result, flag, task_type, question_type, sample_id, error=None):
     result["total"].append(flag)
-    sample_record = {
+    result["samples"].append({
         "id": sample_id,
         "task_type": task_type,
         "question_type": question_type,
         "correct": flag,
         "error": error,
-    }
-    if metadata:
-        sample_record.update(metadata)
-    result["samples"].append(sample_record)
+    })
     if task_type == "position":
         if question_type == "absolute":
             result["position"]["absolute"].append(flag)
@@ -353,20 +251,6 @@ def safe_ratio(values):
 
 
 def build_summary(result, total):
-    category_distribution = {}
-    accepted_stage5_count = 0
-    error_free_fallback_count = 0
-    agent_summary = summarize_agent_records(result["samples"])
-    fallback_count = agent_summary["fallback_count"]
-    used_stage5_count = agent_summary["used_stage5_count"]
-    for sample in result["samples"]:
-        category = str(sample.get("agent_stage5_category") or "none")
-        verification = str(sample.get("agent_verification_status") or "none")
-        category_distribution[category] = category_distribution.get(category, 0) + 1
-        if sample.get("agent_used_stage5") and verification == "accepted":
-            accepted_stage5_count += 1
-        if sample.get("agent_fallback_to_baseline") and not sample.get("error"):
-            error_free_fallback_count += 1
     return {
         "position_relative_accuracy": safe_ratio(result["position"]["relative"]),
         "position_absolute_accuracy": safe_ratio(result["position"]["absolute"]),
@@ -376,19 +260,6 @@ def build_summary(result, total):
         "failed_samples": sum(1 for sample in result["samples"] if sample.get("error")),
         "processed_samples": len(result["samples"]),
         "remaining_samples": max(0, total - len(result["samples"])),
-        "agent_decision_distribution": agent_summary["decision_distribution"],
-        "agent_category_distribution": category_distribution,
-        "agent_verification_distribution": agent_summary["verification_distribution"],
-        "agent_selected_execution_mode_distribution": agent_summary["selected_execution_mode_distribution"],
-        "agent_controller_distribution": agent_summary["controller_distribution"],
-        "agent_selected_dataset_agent_distribution": agent_summary["selected_dataset_agent_distribution"],
-        "agent_used_stage5_count": used_stage5_count,
-        "agent_fallback_count": fallback_count,
-        "agent_triggered_reverification_count": agent_summary["triggered_reverification_count"],
-        "agent_shadow_used_count": agent_summary["shadow_used_count"],
-        "agent_shadow_accepted_count": agent_summary["shadow_accepted_count"],
-        "stage5_usage_precision": accepted_stage5_count / max(1, used_stage5_count),
-        "fallback_precision": error_free_fallback_count / max(1, fallback_count),
     }
 
 
@@ -407,110 +278,6 @@ def empty_result():
     }
 
 
-def resolve_agent_mode():
-    return AGENT_OPTIONS.get("mode", "off")
-
-
-def _load_named_pilot_ids(pilot_name):
-    pilot_path = SPATIALBENCH_NAMED_PILOTS[pilot_name]
-    with pilot_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, dict):
-        ids = data.get("sample_ids", [])
-    else:
-        ids = data
-    return {int(item) for item in ids}
-
-
-def _load_sample_ids_from_file(path_value):
-    path = Path(path_value)
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return set()
-    if path.suffix.lower() == ".json":
-        data = json.loads(text)
-        if isinstance(data, dict):
-            data = data.get("sample_ids", [])
-        return {int(item) for item in data}
-    return {int(line.strip()) for line in text.splitlines() if line.strip()}
-
-
-def _selected_sample_ids(args):
-    if args.pilot:
-        return _load_named_pilot_ids(args.pilot)
-    if args.sample_id_file:
-        return _load_sample_ids_from_file(args.sample_id_file)
-    if args.sample_ids:
-        return {
-            int(item.strip())
-            for item in str(args.sample_ids).split(",")
-            if str(item).strip()
-        }
-    return None
-
-
-def load_info_list(args, *, apply_limit=True):
-    with (spatialbench_dir / "spatial_data.json").open("r", encoding="utf-8") as f:
-        info_list = json.load(f)
-
-    raw_total = len(info_list)
-    selected_ids = _selected_sample_ids(args)
-    if selected_ids is not None:
-        info_list = [sample for sample in info_list if int(sample["id"]) in selected_ids]
-        source_label = (
-            f"pilot={args.pilot}"
-            if args.pilot
-            else ("sample_id_file" if args.sample_id_file else "sample_ids")
-        )
-        print(
-            f"[spatialbench] sample subset {source_label} selected "
-            f"{len(info_list)} / {raw_total} samples"
-        )
-
-    if args.stage5_category_filter != "all":
-        before = len(info_list)
-        info_list = [
-            sample
-            for sample in info_list
-            if spatialbench_category_matches(
-                args.stage5_category_filter,
-                classify_spatialbench_stage5_applicability(
-                    sample["question"],
-                    parser_info=None,
-                    options=sample.get("options"),
-                ).get("category"),
-            )
-        ]
-        print(
-            f"[spatialbench] stage5_category_filter={args.stage5_category_filter} kept "
-            f"{len(info_list)} / {before} samples"
-        )
-
-    if apply_limit and args.limit is not None:
-        info_list = info_list[: args.limit]
-        print(f"[spatialbench] applying --limit {args.limit}, selected samples reduced to {len(info_list)}")
-
-    return info_list
-
-
-def describe_selection_config(args):
-    return {
-        "pilot": args.pilot,
-        "sample_id_file": args.sample_id_file,
-        "sample_ids": args.sample_ids,
-        "stage5_category_filter": args.stage5_category_filter,
-        "limit": args.limit,
-    }
-
-
-def stage4_cache_dir_for_sample(sample_id):
-    return Path(output_folder) / "stage4_spatialbench_point_cache" / str(sample_id)
-
-
-def stage4_cache_available(stage4_dir):
-    return (stage4_dir / "point_data_cache.json").exists() and (stage4_dir / "object_points.npz").exists()
-
-
 def write_csv_records(csv_path, records, fieldnames):
     with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -520,7 +287,9 @@ def write_csv_records(csv_path, records, fieldnames):
 
 
 def run_stage2_parser_only(args, run_id, stage2_parse_fn):
-    info_list = load_info_list(args)
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
     records = []
     for sample in tqdm(info_list, total=len(info_list)):
         sample_id = sample["id"]
@@ -602,7 +371,9 @@ def _stage3_part_query(parser_output):
 
 
 def run_stage3_grounding_only(args, run_id, stage2_parse_fn):
-    info_list = load_info_list(args)
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
 
     cache_root = Path(output_folder) / "stage3_spatialbench_cache"
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -849,7 +620,9 @@ def run_stage3_grounding_only(args, run_id, stage2_parse_fn):
 
 
 def run_stage4_pointdata_only(args, run_id):
-    info_list = load_info_list(args)
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json", encoding="utf-8"))
+    if args.limit is not None:
+        info_list = info_list[: args.limit]
 
     depth_model = depth_esti_model.get_model()
     cache_root = Path(output_folder) / "stage3_spatialbench_cache"
@@ -996,6 +769,7 @@ def recover_progress_from_log(log_path, info_list):
 
 def process_info(info):
     id = info["id"]
+
     question = info["question"]
     options = info["options"]
     answer = info["answer"]
@@ -1018,295 +792,58 @@ def process_info(info):
     stage5_prediction = None
     stage5_context = None
     stage5_gate = None
-    agent_decision = None
-    agent_verification = None
-    auto_route = None
-    agent_mode = resolve_agent_mode() if STAGE5_OPTIONS.get("enabled") else "off"
-    answer_source = "vlm_reasoning"
-    rule_override_used = False
-    rule_override_reason = ""
 
     try:
-        parser_info = run_vlm_with_retry(parse_fn, prompt, image)
-        print(json.dumps(parser_info, indent=2))
-        object_list = list(parser_info.keys())
+        info = run_vlm_with_retry(parse_fn, prompt, image)
+        print(json.dumps(info, indent=2))
+        object_list = list(info.keys())
 
         detections = detection.get_detections(image, object_list, detection_model, output_folder=output_folder)
         mask, ann_img, object_names = sam.get_mask(
-            image, object_list, sam_model, detections, output_folder=output_folder
-        )
+            image, object_list, sam_model, detections, output_folder=output_folder)
 
         depth, _, pcd = depth_esti_model.depth_estimation(image, depth_model, output_folder=output_folder)
-        base_scene_graph, _ = get_scene_graph(
-            image, pcd, mask, parser_info, object_names, orientation_model, output_folder=output_folder
+        scene_graph, _ = get_scene_graph(
+            image, pcd, mask, info, object_names, orientation_model, output_folder=output_folder
         )
-        scene_graph = base_scene_graph
-
         if STAGE5_OPTIONS.get("enabled"):
-            stage5_gate = classify_spatialbench_stage5_applicability(
-                question,
-                parser_info=parser_info,
-                options=options,
-            )
-            stage4_dir = stage4_cache_dir_for_sample(id)
-            cache_available = stage4_cache_available(stage4_dir)
-
-            if agent_mode == "off":
-                if cache_available:
-                    stage5_prediction = predict_from_stage4_dir(
-                        stage4_dir,
-                        dataset="spatialbench",
-                        checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
-                        device=STAGE5_OPTIONS.get("device", "auto"),
-                        num_points=STAGE5_OPTIONS.get("num_points", 1024),
-                    )
-                stage5_context = build_spatialbench_stage5_context(
-                    question,
-                    stage5_gate,
-                    stage5_prediction,
-                    options=options,
+            stage5_gate = classify_spatialbench_stage5_applicability(question, parser_info=info)
+            if stage5_gate.get("applicable"):
+                stage5_prediction = predict_from_stage4_dir(
+                    Path(output_folder) / "stage4_spatialbench_point_cache" / str(id),
+                    dataset="spatialbench",
+                    checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
+                    device=STAGE5_OPTIONS.get("device", "auto"),
+                    num_points=STAGE5_OPTIONS.get("num_points", 1024),
                 )
                 if stage5_prediction:
-                    scene_graph = inject_prediction_into_scene_graph(base_scene_graph, stage5_prediction)
-                verification_status = "accepted" if stage5_prediction else "rejected"
-                verification_reason = "direct_stage5_injection" if stage5_prediction else "stage4_cache_missing_or_prediction_empty"
-                selected_execution_mode = (
-                    "stage5_with_orientation_prompt"
-                    if stage5_context and stage5_context.get("applicable")
-                    else "baseline_only"
-                )
-                agent_decision = {
-                    "dataset": "spatialbench",
-                    "controller": "disabled",
-                    "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
-                    "task_type": task_type,
-                    "question_type_or_orientation_mode": question_type,
-                    "applicable": bool(stage5_prediction),
-                    "decision": "direct_stage5_injection" if stage5_prediction else "skip_stage5_use_baseline",
-                    "decision_reason": "agent_mode_off" if stage5_prediction else "stage4_cache_missing",
-                    "verification_status": verification_status,
-                    "selected_execution_mode": selected_execution_mode,
-                    "selected_actions": ["run_stage5", "inject_scene_graph"] if stage5_prediction else ["fallback_to_baseline_reasoning"],
-                    "stage5_allowed": bool(cache_available),
-                    "use_orientation_prompt": bool(stage5_context and stage5_context.get("applicable")),
-                    "fallback_to_baseline": not bool(stage5_prediction),
-                    "agent_signals": {
-                        "question": question,
-                        "options": [str(item) for item in options],
-                        "parser_object_count": len(parser_info) if isinstance(parser_info, dict) else None,
-                        "parser_confidence": (parser_info or {}).get("parser_confidence")
-                        if isinstance(parser_info, dict)
-                        else None,
-                        "stage5_applicability_category": stage5_gate.get("category"),
-                        "stage5_applicability_reason": stage5_gate.get("reason"),
-                        "stage5_prompt_variant": stage5_gate.get("prompt_variant"),
-                        "stage4_cache_available": bool(cache_available),
-                        "stage5_prediction_available": bool(stage5_prediction),
-                        "stage5_context_available": bool(stage5_context),
-                    },
-                }
-                agent_verification = {
-                    "verification_status": verification_status,
-                    "verification_reason": verification_reason,
-                    "final_decision": agent_decision.get("decision"),
-                    "final_decision_reason": agent_decision.get("decision_reason"),
-                    "selected_execution_mode": selected_execution_mode,
-                    "stage5_prediction_available": bool(stage5_prediction),
-                    "stage5_context_available": bool(stage5_context),
-                    "target_orientation_available": bool((stage5_prediction or {}).get("target_orientation")),
-                    "use_stage5": bool(stage5_prediction),
-                    "use_orientation_prompt": bool(stage5_context and stage5_context.get("applicable")),
-                    "fallback_to_baseline": not bool(stage5_prediction),
-                    "shadow_used": False,
-                    "shadow_accepted": False,
-                    "triggered_reverification": False,
-                }
-                print(
-                    f"[spatialbench] sample {id} stage5 "
-                    f"{'apply' if stage5_prediction else 'skipped'} "
-                    f"category={stage5_gate.get('category')} "
-                    f"prompt_variant={stage5_gate.get('prompt_variant')} "
-                    f"reason={verification_reason}"
-                )
-            else:
-                agent_decision = decide_spatialbench_agent_action(
-                    question=question,
-                    task_type=task_type,
-                    question_type=question_type,
-                    options=options,
-                    parser_info=parser_info,
-                    parser_confidence=(parser_info or {}).get("parser_confidence") if isinstance(parser_info, dict) else None,
-                    stage5_applicability_category=stage5_gate.get("category"),
-                    stage5_applicability_reason=stage5_gate.get("reason"),
-                    stage4_cache_available=cache_available,
-                )
-                print(
-                    f"[spatialbench] sample {id} agent decision={agent_decision.get('decision')} "
-                    f"reason={agent_decision.get('decision_reason')} "
-                    f"prompt_variant={stage5_gate.get('prompt_variant')}"
-                )
-
-                if agent_decision.get("decision") == "use_stage5_with_orientation_prompt":
-                    stage5_prediction = predict_from_stage4_dir(
-                        stage4_dir,
-                        dataset="spatialbench",
-                        checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
-                        device=STAGE5_OPTIONS.get("device", "auto"),
-                        num_points=STAGE5_OPTIONS.get("num_points", 1024),
-                    )
-                    candidate_context = build_spatialbench_stage5_context(
-                        question,
-                        stage5_gate,
-                        stage5_prediction,
-                        options=options,
-                    )
-                    agent_verification = verify_spatialbench_agent_outcome(
-                        agent_decision,
-                        prediction=stage5_prediction,
-                        stage5_context=candidate_context,
-                    )
+                    scene_graph = inject_prediction_into_scene_graph(scene_graph, stage5_prediction)
+                    stage5_context = build_spatialbench_stage5_context(question, stage5_gate, stage5_prediction)
                     print(
-                        f"[spatialbench] sample {id} agent verify="
-                        f"{agent_verification.get('verification_status')} "
-                        f"reason={agent_verification.get('verification_reason')}"
+                        f"[spatialbench] sample {id} stage5 apply "
+                        f"category={stage5_gate.get('category')} "
+                        f"direction={stage5_prediction.get('direction_vector')}"
                     )
-                    if agent_verification.get("verification_status") == "accepted":
-                        scene_graph = inject_prediction_into_scene_graph(base_scene_graph, stage5_prediction)
-                        stage5_context = candidate_context
-                        print(
-                            f"[spatialbench] sample {id} stage5 apply "
-                            f"category={stage5_gate.get('category')} "
-                            f"prompt_variant={stage5_gate.get('prompt_variant')} "
-                            f"direction={stage5_prediction.get('direction_vector')}"
-                        )
-                    else:
-                        print(
-                            f"[spatialbench] sample {id} stage5 skipped "
-                            f"category={stage5_gate.get('category')} "
-                            f"reason={agent_verification.get('verification_reason')}"
-                        )
                 else:
-                    agent_verification = verify_spatialbench_agent_outcome(agent_decision)
-                    print(
-                        f"[spatialbench] sample {id} agent verify="
-                        f"{agent_verification.get('verification_status')} "
-                        f"reason={agent_verification.get('verification_reason')}"
-                    )
                     print(
                         f"[spatialbench] sample {id} stage5 skipped "
                         f"category={stage5_gate.get('category')} "
-                        f"reason={agent_decision.get('decision_reason')}"
+                        "reason=prediction unavailable"
                     )
-
-                if agent_mode == "auto":
-                    auto_route = decide_auto_agent_route(
-                        question=question,
-                        task_type=task_type,
-                        question_type=question_type,
-                        child_decision={
-                            **agent_decision,
-                            "verification_status": agent_verification.get("verification_status"),
-                            "selected_execution_mode": agent_verification.get(
-                                "selected_execution_mode",
-                                agent_decision.get("selected_execution_mode"),
-                            ),
-                        },
-                    )
-                else:
-                    auto_route = {
-                        "controller": "dataset_mode_fixed",
-                        "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
-                        "dataset_hint": "spatialbench",
-                        "selected_dataset_agent": agent_decision.get("controller"),
-                        "selected_execution_mode": agent_verification.get(
-                            "selected_execution_mode",
-                            agent_decision.get("selected_execution_mode", "baseline_only"),
-                        ),
-                        "route_reason": "dataset_mode_fixed",
-                        "child_decision": agent_decision.get("decision"),
-                        "child_verification_status": agent_verification.get("verification_status", "not_run"),
-                    }
-
-        use_axis_rule_decoder = (
-            agent_mode != "off"
-            and bool(stage5_context and stage5_context.get("applicable"))
-            and str(stage5_context.get("prompt_variant") or "") == "axis_direction"
-            and bool((agent_verification or {}).get("use_stage5"))
-        )
-        if use_axis_rule_decoder:
-            preferred_letter = str(stage5_context.get("preferred_option_letter") or "").strip()
-            preferred_option = str(stage5_context.get("preferred_option") or "").strip()
-            preferred_score = float(stage5_context.get("preferred_option_score") or 0.0)
-            preferred_margin = float(stage5_context.get("preferred_option_margin") or 0.0)
-            if preferred_letter and (preferred_score >= 0.25 or preferred_margin >= 0.2):
-                text = preferred_letter
-                answer_source = "axis_rule_decoder"
-                rule_override_used = True
-                rule_override_reason = (
-                    f"preferred={preferred_letter}. {preferred_option} "
-                    f"score={preferred_score:.3f} margin={preferred_margin:.3f}"
-                )
-                print(
-                    f"[spatialbench] sample {id} axis rule override="
-                    f"{preferred_letter} option={preferred_option} "
-                    f"score={preferred_score:.3f} margin={preferred_margin:.3f}"
-                )
             else:
-                text = run_vlm_with_retry(reason_fn, prompt, ann_img, scene_graph, True, stage5_context)
-        else:
-            text = run_vlm_with_retry(reason_fn, prompt, ann_img, scene_graph, True, stage5_context)
+                print(
+                    f"[spatialbench] sample {id} stage5 skipped "
+                    f"category={stage5_gate.get('category')} "
+                    f"reason={stage5_gate.get('reason')}"
+                )
+        text = run_vlm_with_retry(reason_fn, prompt, ann_img, scene_graph, True, stage5_context)
 
         print(text)
-        flag = ("A" == text[0] and answer == 0) or ("B" == text[0] and answer == 1) or ("C" == text[0] and answer == 2) or (
-            "D" == text[0] and answer == 3
-        )
-        sample_record = {
-            "id": id,
-            "sample_key": str(id),
-            "task_type": task_type,
-            "question_type": question_type,
-            "correct": bool(flag),
-            "error": None,
-            "agent_controller": (agent_decision or {}).get("controller", "disabled"),
-            "agent_policy": (agent_decision or {}).get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
-            "agent_selected_dataset_agent": (auto_route or {}).get("selected_dataset_agent", "disabled"),
-            "agent_route_reason": (auto_route or {}).get("route_reason", "agent_mode_off"),
-            "agent_decision": (agent_verification or {}).get("final_decision", (agent_decision or {}).get("decision", "stage5_disabled")),
-            "agent_decision_reason": (agent_verification or {}).get("final_decision_reason", (agent_decision or {}).get("decision_reason", "stage5_disabled")),
-            "agent_verification_status": (agent_verification or {}).get("verification_status", "not_run"),
-            "agent_verification_reason": (agent_verification or {}).get("verification_reason", "verification_not_required"),
-            "agent_selected_execution_mode": (agent_verification or {}).get(
-                "selected_execution_mode",
-                (agent_decision or {}).get("selected_execution_mode", "baseline_only"),
-            ),
-            "agent_stage5_category": (stage5_gate or {}).get("category", ""),
-            "agent_stage5_prompt_variant": ((agent_decision or {}).get("agent_signals") or {}).get("stage5_prompt_variant"),
-            "agent_parser_object_count": ((agent_decision or {}).get("agent_signals") or {}).get("parser_object_count"),
-            "agent_parser_confidence": ((agent_decision or {}).get("agent_signals") or {}).get("parser_confidence"),
-            "agent_stage5_allowed": bool((agent_decision or {}).get("stage5_allowed")),
-            "agent_used_orientation_prompt": bool((agent_verification or {}).get("use_orientation_prompt")),
-            "agent_used_stage5": bool((agent_verification or {}).get("use_stage5")),
-            "agent_fallback_to_baseline": bool((agent_verification or {}).get("fallback_to_baseline", True)),
-            "agent_triggered_reverification": bool((agent_verification or {}).get("triggered_reverification")),
-            "agent_shadow_used": bool((agent_verification or {}).get("shadow_used")),
-            "agent_shadow_accepted": bool((agent_verification or {}).get("shadow_accepted")),
-            "agent_stage4_cache_available": ((agent_decision or {}).get("agent_signals") or {}).get("stage4_cache_available"),
-            "agent_stage5_prediction_available": bool((agent_verification or {}).get("stage5_prediction_available")),
-            "agent_stage5_context_available": bool((agent_verification or {}).get("stage5_context_available")),
-            "agent_answer_source": answer_source,
-            "agent_rule_override_used": bool(rule_override_used),
-            "agent_rule_override_reason": rule_override_reason,
-            "agent_signals": {
-                **((agent_decision or {}).get("agent_signals") or {}),
-                "stage5_prediction_available": bool((agent_verification or {}).get("stage5_prediction_available")),
-                "stage5_context_available": bool((agent_verification or {}).get("stage5_context_available")),
-                "target_orientation_available": bool((agent_verification or {}).get("target_orientation_available")),
-                "answer_source": answer_source,
-                "rule_override_used": bool(rule_override_used),
-                "rule_override_reason": rule_override_reason,
-            },
-        }
-        return sample_record
+        if ("A" == text[0] and answer == 0) or ("B" == text[0] and answer == 1) or ("C" == text[0] and answer == 2) or (
+                "D" == text[0] and answer == 3):
+            return True, task_type, question_type, id
+        else:
+            return False, task_type, question_type, id
     finally:
         del image, detections, mask, ann_img, object_names, depth, pcd, scene_graph, text
         gc.collect()
@@ -1401,33 +938,14 @@ if __name__ == "__main__":
             "num_points": args.stage5_num_points,
         }
     )
-    AGENT_OPTIONS.clear()
-    AGENT_OPTIONS.update(
-        {
-            "mode": args.agent_mode or ("dataset" if args.use_stage5_head else "off"),
-            "policy": args.agent_policy,
-            "save_trace": bool(args.agent_save_trace),
-            "debug_dir": args.agent_debug_dir,
-            "shadow_eval": bool(args.agent_shadow_eval),
-            "extended_actions": bool(args.agent_extended_actions),
-        }
-    )
     if STAGE5_OPTIONS["enabled"]:
         print("[spatialbench] stage5_head=enabled")
         if STAGE5_OPTIONS["checkpoint_path"]:
             print(f"[spatialbench] stage5_checkpoint={STAGE5_OPTIONS['checkpoint_path']}")
         print(f"[spatialbench] stage5_device={STAGE5_OPTIONS['device']}")
         print(f"[spatialbench] stage5_num_points={STAGE5_OPTIONS['num_points']}")
-    print(f"[spatialbench] agent_mode={AGENT_OPTIONS['mode']}")
-    print(f"[spatialbench] agent_policy={AGENT_OPTIONS['policy']}")
-    if AGENT_OPTIONS["save_trace"]:
-        print("[spatialbench] agent_trace=enabled")
-    if AGENT_OPTIONS["extended_actions"]:
-        print("[spatialbench] agent_extended_actions=requested (no-op in v1)")
-    if AGENT_OPTIONS["shadow_eval"]:
-        print("[spatialbench] agent_shadow_eval=requested (no-op in v1)")
 
-    info_list = load_info_list(args, apply_limit=False)
+    info_list = json.load(open(spatialbench_dir / "spatial_data.json"))
     total = len(info_list)
     print("total: ", total)
     result, processed_ids = load_progress(reset_progress=args.reset_progress)
@@ -1454,47 +972,16 @@ if __name__ == "__main__":
         iterator = tqdm(pending_info_list, total=len(pending_info_list))
         for sample in iterator:
             try:
-                record = process_info(sample)
-                flag = record["correct"]
-                task_type = record["task_type"]
-                question_type = record["question_type"]
-                sample_id = record["id"]
+                flag, task_type, question_type, sample_id = process_info(sample)
                 error = None
-                metadata = {key: value for key, value in record.items() if key not in {"id", "task_type", "question_type", "correct", "error"}}
             except Exception as exc:
                 sample_id = sample.get("id")
                 task_type = sample.get("task_type")
                 question_type = sample.get("question_type")
                 flag = False
                 error = str(exc)
-                metadata = {
-                    "sample_key": str(sample_id),
-                    "agent_controller": "agent_error",
-                    "agent_policy": AGENT_OPTIONS.get("policy", "rule_v2"),
-                    "agent_selected_dataset_agent": "agent_error",
-                    "agent_route_reason": "agent_exception",
-                    "agent_decision": "agent_error",
-                    "agent_decision_reason": str(exc),
-                    "agent_verification_status": "rejected",
-                    "agent_verification_reason": str(exc),
-                    "agent_selected_execution_mode": "fallback_reasoning",
-                    "agent_stage5_category": "",
-                    "agent_parser_object_count": None,
-                    "agent_parser_confidence": 0.0,
-                    "agent_stage5_allowed": False,
-                    "agent_used_orientation_prompt": False,
-                    "agent_used_stage5": False,
-                    "agent_fallback_to_baseline": True,
-                    "agent_triggered_reverification": False,
-                    "agent_shadow_used": False,
-                    "agent_shadow_accepted": False,
-                    "agent_stage4_cache_available": False,
-                    "agent_stage5_prediction_available": False,
-                    "agent_stage5_context_available": False,
-                    "agent_signals": {},
-                }
                 print(f"[spatialbench] sample {sample_id} failed: {exc}")
-            update_result(result, flag, task_type, question_type, sample_id, error=error, metadata=metadata)
+            update_result(result, flag, task_type, question_type, sample_id, error=error)
             save_progress(result)
     else:
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -1502,51 +989,19 @@ if __name__ == "__main__":
             for future in tqdm(as_completed(futures), total=len(pending_info_list)):
                 sample = futures[future]
                 try:
-                    record = future.result()
-                    flag = record["correct"]
-                    task_type = record["task_type"]
-                    question_type = record["question_type"]
-                    sample_id = record["id"]
+                    flag, task_type, question_type, sample_id = future.result()
                     error = None
-                    metadata = {key: value for key, value in record.items() if key not in {"id", "task_type", "question_type", "correct", "error"}}
                 except Exception as exc:
                     sample_id = sample.get("id")
                     task_type = sample.get("task_type")
                     question_type = sample.get("question_type")
                     flag = False
                     error = str(exc)
-                    metadata = {
-                        "sample_key": str(sample_id),
-                        "agent_controller": "agent_error",
-                        "agent_policy": AGENT_OPTIONS.get("policy", "rule_v2"),
-                        "agent_selected_dataset_agent": "agent_error",
-                        "agent_route_reason": "agent_exception",
-                        "agent_decision": "agent_error",
-                        "agent_decision_reason": str(exc),
-                        "agent_verification_status": "rejected",
-                        "agent_verification_reason": str(exc),
-                        "agent_selected_execution_mode": "fallback_reasoning",
-                        "agent_stage5_category": "",
-                        "agent_parser_object_count": None,
-                        "agent_parser_confidence": 0.0,
-                        "agent_stage5_allowed": False,
-                        "agent_used_orientation_prompt": False,
-                        "agent_used_stage5": False,
-                        "agent_fallback_to_baseline": True,
-                        "agent_triggered_reverification": False,
-                        "agent_shadow_used": False,
-                        "agent_shadow_accepted": False,
-                        "agent_stage4_cache_available": False,
-                        "agent_stage5_prediction_available": False,
-                        "agent_stage5_context_available": False,
-                        "agent_signals": {},
-                    }
                     print(f"[spatialbench] sample {sample_id} failed: {exc}")
-                update_result(result, flag, task_type, question_type, sample_id, error=error, metadata=metadata)
+                update_result(result, flag, task_type, question_type, sample_id, error=error)
                 save_progress(result)
 
     summary = build_summary(result, total)
-    result["run_filter"] = describe_selection_config(args)
     print("Position relative accuracy: ", summary["position_relative_accuracy"])
     print("Position absolute accuracy: ", summary["position_absolute_accuracy"])
     print("Orientation relative accuracy: ", summary["orientation_relative_accuracy"])
@@ -1555,13 +1010,4 @@ if __name__ == "__main__":
 
     result["summary"] = summary
     save_progress(result)
-    if STAGE5_OPTIONS["enabled"] and (AGENT_OPTIONS.get("save_trace") or AGENT_OPTIONS.get("mode") in {"dataset", "auto"}):
-        debug_dir = write_agent_trace_bundle(
-            records=result["samples"],
-            output_dir=output_folder,
-            dataset="spatialbench",
-            run_id=run_id,
-            debug_root=AGENT_OPTIONS.get("debug_dir"),
-        )
-        print(f"[spatialbench] agent_debug_dir={debug_dir}")
     write_json_outputs(result, output_folder, "eval_spatialbench.json", run_id)

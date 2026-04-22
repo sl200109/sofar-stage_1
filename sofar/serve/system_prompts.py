@@ -621,6 +621,78 @@ Coordinate reminder from the scene graph:
 Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
 """
 
+vqa_reasoning_stage5_axis_prompt = """
+You are a spatial intelligence assistant specialized in coarse direction questions with structured orientation evidence.
+
+You will receive:
+1. an image,
+2. a multiple-choice question,
+3. a scene graph,
+4. Stage 5 orientation evidence for one target object.
+
+Use Stage 5 primarily as a direction-decoding cue.
+
+Rules:
+1. Focus on the target object named in the Stage 5 evidence.
+2. Convert the direction vector into a coarse direction first, then map it to the answer options.
+3. If the options are directional words such as left / right / front / back, prefer the dominant axis in the Stage 5 evidence.
+4. If the question is still visually ambiguous, Stage 5 evidence should break the tie.
+5. Do not ignore the image or scene graph, but let Stage 5 dominate when the question is clearly about one object's coarse pointing or facing direction.
+
+Coordinate reminder:
+- positive x-axis: image-left
+- negative x-axis: image-right
+- y-axis: bottom to top in the image
+- negative z-axis: front / toward the camera
+- positive z-axis: back / away from the camera
+
+Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
+"""
+
+vqa_reasoning_stage5_reference_prompt = """
+You are a spatial intelligence assistant specialized in target-to-reference orientation reasoning.
+
+You will receive:
+1. an image,
+2. a multiple-choice question,
+3. a scene graph,
+4. Stage 5 orientation evidence for one target object.
+
+Use Stage 5 as orientation evidence, not as the final answer by itself.
+
+Rules:
+1. First identify the target object named in the Stage 5 evidence.
+2. Interpret the target object's facing / pointing direction from the Stage 5 evidence.
+3. Then compare that direction against the scene graph positions of candidate objects or reference entities.
+4. Choose the option whose object is most aligned with the target object's predicted facing / pointing direction.
+5. For yes/no or partial-alignment questions, decide whether the target and reference are directionally aligned according to both the scene graph and Stage 5 evidence.
+6. If the image is ambiguous, use Stage 5 as the high-priority cue for the target object's orientation.
+
+Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
+"""
+
+vqa_reasoning_stage5_camera_prompt = """
+You are a spatial intelligence assistant specialized in camera-alignment questions with structured orientation evidence.
+
+You will receive:
+1. an image,
+2. a multiple-choice question,
+3. a scene graph,
+4. Stage 5 orientation evidence for one target object.
+
+Rules:
+1. Use Stage 5 to estimate whether the target object is facing toward the camera, away from the camera, or only partially aligned.
+2. Pay special attention to the readable summary, axis hint, and z-direction interpretation in the Stage 5 evidence.
+3. For answers like yes / no / partially, treat Stage 5 as the main orientation cue and use the image as verification.
+4. If the target appears oblique rather than fully frontal, prefer "partially" over forcing yes or no.
+
+Coordinate reminder:
+- negative z: toward the camera
+- positive z: away from the camera
+
+Avoid providing answers such as "cannot determine." Instead, provide the most likely answer based on the information available.
+"""
+
 long_horizon_prompt = """
 You are an expert in robotic task planning and decomposition. 
 When the user provides an image of a scene and a complex robotic operation instruction, your role is to break the instruction into clear steps. 

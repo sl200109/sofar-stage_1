@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-16T10:40:00",
+  "updated_at": "2026-04-22T11:30:00",
   "tasks": [
     {
       "id": "stage5_single_domain_open6dor_training",
@@ -16,74 +16,151 @@
       "notes": "best_val_loss=0.223075, test mean_cosine=0.554985, test mean_angle_deg=49.1498"
     },
     {
-      "id": "stage5_combined_training",
+      "id": "stage5_combined_training_variants",
       "owner": "server",
       "status": "done",
-      "title": "完成 Combined / Balanced / Filtered / Curriculum 试验",
-      "notes": "统一共享 head 的跨域训练当前阶段性判负，作为负结果链保留，不再优先继续"
+      "title": "完成 Combined / Balanced / Filtered / Curriculum 训练实验",
+      "notes": "统一共享 head 的跨域训练当前阶段性判负，作为负结果链保留。"
     },
     {
-      "id": "stage5_local_single_domain_pipeline_integration",
-      "owner": "local",
-      "status": "done",
-      "title": "完成单域最优 checkpoint 回接到 Open6DOR 和 SpatialBench pipeline",
-      "notes": "已新增 stage5_inference.py、runtime checkpoint 路径和 full pipeline 开关"
-    },
-    {
-      "id": "stage5_server_validate_open6dor_pipeline",
+      "id": "stage5_pipeline_integration_open6dor",
       "owner": "server",
       "status": "done",
-      "title": "验证 Open6DOR pipeline + Open6DOR-only best checkpoint",
-      "notes": "20-case smoke 已通过：20/20 success, stage5_applied=20/20, error_count=0, pipeline_mode=joint 覆盖 20/20"
+      "title": "完成 Open6DOR 单域最优 checkpoint 回接与 20-case smoke",
+      "notes": "20/20 success, stage5_applied=20/20, error_count=0。"
     },
     {
-      "id": "stage5_server_validate_spatialbench_pipeline",
+      "id": "stage5_pipeline_integration_spatialbench",
       "owner": "server",
       "status": "done",
-      "title": "验证 SpatialBench pipeline + SpatialBench-only best checkpoint",
-      "notes": "20-case smoke 已跑通，无错误；但当前 orientation_relative_accuracy=0.0, orientation_absolute_accuracy=0.0，需要转入效果诊断而不是继续扩量"
+      "title": "完成 SpatialBench 单域最优 checkpoint 回接与 20-case smoke",
+      "notes": "链路跑通但 direct injection 未带来 orientation 提升，后续主线已转向题型 gating 与 agent routing。"
     },
     {
       "id": "stage5_effect_test_open6dor",
-      "owner": "server",
-      "status": "todo",
-      "title": "执行 Open6DOR 单域回接后的效果测试",
-      "notes": "下一步先跑 100-case，继续收集 stage5_open6dor_pipeline_records.json / csv，并检查 target_orientation 与 result.json 的一致性"
+      "owner": "local",
+      "status": "done",
+      "title": "完成 Open6DOR 单域回接后的效果诊断",
+      "notes": "已完成 100-case 级别稳定性与 mode-level 诊断；结论是 direct Stage 5 不适合全 mode，全量收益不能直接宣称，后续转向 agent control。"
     },
     {
       "id": "stage5_effect_diagnose_spatialbench",
       "owner": "local",
-      "status": "in_progress",
-      "title": "诊断 SpatialBench 单域回接后的 orientation 效果",
-      "notes": "当前 20-case 中 orientation_relative_accuracy=0.0, orientation_absolute_accuracy=0.0；已确认 scene graph 注入成功，但题型大量属于角度比较 / 开合角 / 平行关系 / 多对象角差 / 转弯计数，和当前单方向向量 head 不匹配。已补充 gating 和更强 prompt。"
-    },
-    {
-      "id": "stage5_normalize_open6dor_orientation_keys",
-      "owner": "local",
-      "status": "todo",
-      "title": "统一 Open6DOR stage5_target_orientation 键名",
-      "notes": "当前混有 upright / plug_right / silver plug end / bottom down / bottom_down 等风格，后续做严格效果对比前最好先归一化"
-    },
-    {
-      "id": "stage5_dataset_specific_conditioning",
-      "owner": "local",
-      "status": "todo",
-      "title": "设计 dataset-specific conditioning",
-      "notes": "仅在单域回接的效果测试收口后再考虑，不作为当前主线"
+      "status": "done",
+      "title": "完成 SpatialBench 单域回接后的效果诊断",
+      "notes": "已确认 SpatialBench orientation 题型异质性强，很多题不适合单对象方向向量 head；后续主线转向 task-aware gating 与 agent routing。"
     },
     {
       "id": "stage5_spatialbench_gating_design",
       "owner": "local",
       "status": "done",
-      "title": "为 SpatialBench 设计 Stage 5 适用题型筛选",
-      "notes": "已新增 spatialbench_stage5.py，并在 eval_spatialbench.py 中按题型与 parser 对象数做 gating；同时加入 Stage 5 专用 reasoning prompt 和语言化 orientation evidence。"
+      "title": "完成 SpatialBench 题型筛选、Stage 5 gating 与更强 prompt",
+      "notes": "已新增 spatialbench_stage5.py，并在 eval_spatialbench.py / qwen_inference.py / system_prompts.py 中接入。"
     },
     {
       "id": "stage5_spatialbench_subset_smoke",
       "owner": "server",
+      "status": "done",
+      "title": "完成 SpatialBench gating+prompt 版 20-case smoke",
+      "notes": "已确认 stage5 skipped category 日志与 gating 生效；当前未命中足够适用子题，后续验证交给 Stage 6/7/8 agent 与 Stage 8 eval。"
+    },
+    {
+      "id": "stage5_normalize_open6dor_orientation_keys",
+      "owner": "local",
+      "status": "done",
+      "title": "统一 Open6DOR stage5_target_orientation 键名",
+      "notes": "已在 stage5_inference.py 中加入 Open6DOR direction_attributes 归一化，并在 open6dor_perception.py 里记录 raw/normalized attrs 方便后续分析。"
+    },
+    {
+      "id": "stage5_open6dor_mode_gating",
+      "owner": "local",
+      "status": "done",
+      "title": "完成 Open6DOR Stage 5 模式级 gating",
+      "notes": "默认仅对 upright,upright_lens_forth 直接启用 Stage 5，并将 plug_right/lying_flat 留给 conditional verify 主线。"
+    },
+    {
+      "id": "report_agent_reframe",
+      "owner": "local",
+      "status": "done",
+      "title": "完成实验设计报告的 agent 化路线重写",
+      "notes": "总叙事已改为 PSCR backbone + lightweight agent layer，并明确 Open6DOR 与 SpatialBench 走不同主线。"
+    },
+    {
+      "id": "stage6_reverification_agent_rules",
+      "owner": "local",
+      "status": "done",
+      "title": "实现 Re-Verification Agent 的规则版",
+      "notes": "已补全 semantic_orientation_agent.py 的统一 schema、SpatialBench evidence verify、Open6DOR mode-aware verify 与 reject/shadow 路线。"
+    },
+    {
+      "id": "stage7_module_selection_agent_heuristic",
+      "owner": "local",
+      "status": "done",
+      "title": "实现 Module-Selection Agent 的 heuristic 版",
+      "notes": "SpatialBench 已支持 off/dataset/auto 三种控制模式；Open6DOR 已接入 direct/conditional/shadow/baseline 四类执行路径。"
+    },
+    {
+      "id": "stage7_auto_mode_selection_agent",
+      "owner": "local",
+      "status": "done",
+      "title": "实现 AutoModeSelection Agent 的三级控制入口",
+      "notes": "已新增 decide_auto_agent_route(...)，并在 SpatialBench/Open6DOR 两条链路中写入 selected_dataset_agent / selected_execution_mode / route_reason。"
+    },
+    {
+      "id": "stage6_spatialbench_rule_v2",
+      "owner": "local",
+      "status": "done",
+      "title": "完成 SpatialBench rule_v2 的题型细分与 prompt 分流",
+      "notes": "已新增 axis_direction / reference_alignment / camera_alignment 三类适用子题，修正 parser_object_count=2 的误杀，并在 spatialbench_stage5.py / semantic_orientation_agent.py / qwen_inference.py / system_prompts.py / eval_spatialbench.py 中落地。"
+    },
+    {
+      "id": "stage6_spatialbench_agent_smoke",
+      "owner": "server",
       "status": "todo",
-      "title": "验证 SpatialBench 题型筛选后的 Stage 5 子集效果",
-      "notes": "下一步重新跑 SpatialBench 20-case smoke，重点观察日志中的 stage5 apply / stage5 skipped 分布，以及 orientation 准确率是否从 0.0 回升。"
+      "title": "执行 SpatialBench 规则版 agent 20-case smoke",
+      "notes": "目标是确认 decision / verify / selected_execution_mode / dataset_agent / prompt_variant 分布字段稳定写入 progress 与 agent_debug。"
+    },
+    {
+      "id": "stage6_spatialbench_applicable_pilot_smoke",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 SpatialBench stage5_applicable14 定向 smoke",
+      "notes": "先对 14 条定向 pilot 样本补 Stage 3/4 cache，再验证 targeted smoke 中是否出现 stage5 apply、prompt_variant 分流与非零 agent_used_stage5_count。"
+    },
+    {
+      "id": "stage6_open6dor_agent_schema_smoke",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 Open6DOR 规则版 agent 20-case smoke",
+      "notes": "目标是确认 direct / conditional / baseline / shadow 四类执行路径、verify 结果和 agent_debug 产物全部稳定。"
+    },
+    {
+      "id": "stage8_agent_eval_runner",
+      "owner": "local",
+      "status": "done",
+      "title": "完成 Stage 8 独立评测 runner",
+      "notes": "已新增 sofar/analysis/stage8_agent_eval.py，可独立运行 baseline / direct_stage5 / agent 三组评测并输出 output/agent_eval/... 汇总。"
+    },
+    {
+      "id": "stage8_agent_ablation_runner",
+      "owner": "local",
+      "status": "done",
+      "title": "完成 Stage 8 消融 runner",
+      "notes": "已新增 sofar/analysis/stage8_agent_ablation.py，可顺序调用 stage8_agent_eval.py 并输出 ablation_summary.json / ablation_table.csv。"
+    },
+    {
+      "id": "stage8_server_smoke",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 Stage 8 agent eval / ablation 小规模 smoke",
+      "notes": "优先验证 SpatialBench/Open6DOR 在 baseline / direct_stage5 / agent 三组下都能产出 output/agent_eval_smoke/... 与 ablation 汇总。"
+    },
+    {
+      "id": "documentation_code_map_sync",
+      "owner": "local",
+      "status": "done",
+      "title": "完成主线代码地图、交接总表与记录文档同步",
+      "notes": "已新增 当前代码地图与交接总表.md，并同步 baseline_stage5_tracker.md、baseline_stage5_todolist.json、交接操作.txt、实验设计报告的工程落地状态。"
     }
   ]
 }

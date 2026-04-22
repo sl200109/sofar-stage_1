@@ -1,0 +1,19 @@
+{
+  "description": "SpatialBench questions currently classified as single_object_direction by the Stage 5 applicability gate.",
+  "sample_ids": [
+    47,
+    101,
+    115,
+    123,
+    131,
+    137,
+    154,
+    180,
+    189,
+    200,
+    204,
+    205,
+    216,
+    218
+  ]
+}

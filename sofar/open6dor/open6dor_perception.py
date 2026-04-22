@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -31,6 +32,7 @@ from segmentation import sam, florence as detection
 from serve.utils import generate_rotation_matrix, get_point_cloud_from_rgbd
 from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
+from serve.agent_debug import summarize_agent_records, write_agent_trace_bundle
 from serve.qwen_runtime import resolve_qwen_dtype
 from serve.stage3_grounding import (
     constrain_child_mask_to_parent,
@@ -49,6 +51,12 @@ from serve.stage4_point_data import (
     save_stage4_cache,
 )
 from serve.stage5_inference import predict_from_stage4_dir
+from serve.semantic_orientation_agent import (
+    decide_auto_agent_route,
+    decide_open6dor_agent_action,
+    infer_open6dor_execution_band,
+    verify_open6dor_agent_outcome,
+)
 
 warnings.filterwarnings("ignore")
 open6dor_parsing_fn = None
@@ -61,9 +69,11 @@ orientation_model = None
 RUN_RECORDS = []
 RUN_OPTIONS = {}
 STAGE5_OPTIONS = {}
+AGENT_OPTIONS = {}
 ORIENTATION_TEMPLATES = {}
 DEFAULT_PROGRESS_FILE = "open6dor_perception_progress.json"
 DEFAULT_SUMMARY_FILE = "open6dor_perception_summary.json"
+DEFAULT_STAGE5_OPEN6DOR_ALLOWED_MODES = {"upright", "upright_lens_forth"}
 NAMED_PILOTS = {
     "open6dor10": ROOT_DIR / "open6dor" / "pilots" / "open6dor_pilot_10.json",
 }
@@ -81,6 +91,33 @@ def _env_flag(name, default):
     if raw is None or raw == "":
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _normalize_stage5_mode_label(value):
+    label = str(value or "").strip().lower().replace(" ", "_")
+    aliases = {
+        "lying_sideways": "lying_sideways",
+        "lying_flat": "lying_flat",
+        "clip_sideways": "clip_sideways",
+        "upside_down_textual": "upside_down_textual",
+        "sideways_textual": "sideways_textual",
+        "upright_lens_forth": "upright_lens_forth",
+    }
+    return aliases.get(label, label)
+
+
+def _parse_stage5_mode_list(raw_value, default_modes=None):
+    if raw_value is None or str(raw_value).strip() == "":
+        values = default_modes or set()
+        return {str(item).strip().lower() for item in values if str(item).strip()}
+    normalized = str(raw_value).strip().lower()
+    if normalized in {"all", "*"}:
+        return {"all"}
+    return {
+        _normalize_stage5_mode_label(item)
+        for item in normalized.split(",")
+        if _normalize_stage5_mode_label(item)
+    }
 
 
 def _jsonify(value):
@@ -169,6 +206,48 @@ def parse_args():
         type=int,
         default=1024,
         help="Number of points sampled before feeding the Stage 5 orientation head.",
+    )
+    parser.add_argument(
+        "--stage5-open6dor-modes",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated Open6DOR orientation modes allowed to use Stage 5. "
+            "Default is upright,upright_lens_forth. Use 'all' to disable mode gating."
+        ),
+    )
+    parser.add_argument(
+        "--agent-mode",
+        choices=["off", "dataset", "auto"],
+        default=None,
+        help="Agent control mode. Defaults to dataset when --use-stage5-head is enabled, otherwise off.",
+    )
+    parser.add_argument(
+        "--agent-policy",
+        type=str,
+        default="rule_v2",
+        help="Agent policy label written into logs and debug traces.",
+    )
+    parser.add_argument(
+        "--agent-save-trace",
+        action="store_true",
+        help="Write centralized agent traces to output/agent_debug/...",
+    )
+    parser.add_argument(
+        "--agent-debug-dir",
+        type=str,
+        default=None,
+        help="Optional debug root override. The final path will still be grouped as <root>/open6dor/<run_id>/.",
+    )
+    parser.add_argument(
+        "--agent-shadow-eval",
+        action="store_true",
+        help="Run Stage 5 in shadow-only mode for baseline-only Open6DOR orientation bands.",
+    )
+    parser.add_argument(
+        "--agent-extended-actions",
+        action="store_true",
+        help="Reserved hook for ROI rebuild / part-first fallback. Open6DOR v1 records the flag but does not execute extra actions.",
     )
     return parser.parse_args()
 
@@ -288,6 +367,7 @@ def save_progress(output_dir, run_id, dataset_root, dataset_paths, run_context):
         "min_success_sec": min((item.get("elapsed_sec") for item in success_records), default=None),
         "max_success_sec": max((item.get("elapsed_sec") for item in success_records), default=None),
         "stage_timing_summary": summarize_stage_timings(normalized_records),
+        "agent_summary": summarize_open6dor_agent_records(normalized_records),
         "slowest_tasks": [
             {
                 "task_dir": item.get("task_dir"),
@@ -715,6 +795,72 @@ def reuse_or_compute_perception(task_dir, preprocessed_image, pcd, object_contex
     }
 
 
+def infer_open6dor_stage5_mode(task_dir, task_info=None, parsed_info=None):
+    task_info = task_info or {}
+    parsed_info = parsed_info or {}
+    candidates = [
+        task_info.get("rot_tag_detail"),
+        task_info.get("orientation_mode"),
+        parsed_info.get("orientation_mode"),
+    ]
+    for candidate in candidates:
+        label = _normalize_stage5_mode_label(candidate)
+        if label:
+            return label
+
+    task_dir_str = str(task_dir).replace("\\", "/")
+    match = re.search(r"\.__([^/]+?)(?:/|$)", task_dir_str)
+    if match:
+        return _normalize_stage5_mode_label(match.group(1))
+    return ""
+
+
+def should_apply_open6dor_stage5(task_dir, task_info=None, parsed_info=None):
+    mode = infer_open6dor_stage5_mode(task_dir, task_info=task_info, parsed_info=parsed_info)
+    allowed_modes = set(STAGE5_OPTIONS.get("allowed_modes") or [])
+    if not STAGE5_OPTIONS.get("enabled"):
+        return {"apply": False, "mode": mode, "reason": "stage5_disabled"}
+    if "all" in allowed_modes:
+        return {"apply": True, "mode": mode, "reason": "all_modes_enabled"}
+    if not mode:
+        return {"apply": False, "mode": "", "reason": "unknown_orientation_mode"}
+    if mode in allowed_modes:
+        return {"apply": True, "mode": mode, "reason": "mode_allowed"}
+    return {"apply": False, "mode": mode, "reason": f"mode_not_allowed:{mode}"}
+
+
+def resolve_agent_mode():
+    return AGENT_OPTIONS.get("mode", "off")
+
+
+def load_open6dor_stage4_signals(task_dir):
+    stage4_dir = Path(task_dir) / "output" / "stage4"
+    cache_path = stage4_dir / "point_data_cache.json"
+    object_points_path = stage4_dir / "object_points.npz"
+    payload = _load_json_if_exists(cache_path) or {}
+    grounding = payload.get("grounding", {}) if isinstance(payload, dict) else {}
+    geometry_priors = payload.get("geometry_priors", {}) if isinstance(payload, dict) else {}
+    return {
+        "stage4_dir": stage4_dir,
+        "stage4_cache_available": cache_path.exists() and object_points_path.exists(),
+        "object_score": grounding.get("object_score"),
+        "part_score": grounding.get("part_score"),
+        "part_ratio": geometry_priors.get("part_ratio"),
+    }
+
+
+def summarize_open6dor_agent_records(records):
+    agent_records = [record for record in records if record.get("stage5_enabled")]
+    summary = summarize_agent_records(agent_records)
+    mode_distribution = {}
+    for record in agent_records:
+        mode = str(record.get("stage5_mode") or "none")
+        mode_distribution[mode] = mode_distribution.get(mode, 0) + 1
+    summary["stage5_mode_distribution"] = mode_distribution
+    summary["stage5_applied_count"] = sum(1 for record in agent_records if record.get("stage5_applied"))
+    return summary
+
+
 def process_dataset(task_dir):
     start_time = time.perf_counter()
     stage_times = {}
@@ -722,7 +868,33 @@ def process_dataset(task_dir):
     perception_cache_hit = False
     pipeline_mode = "legacy"
     stage5_prediction = None
+    stage5_shadow_prediction = None
     stage5_fallback_scene_graph_used = False
+    stage5_gate = {"apply": False, "mode": "", "reason": "stage5_disabled"}
+    agent_verification = {
+        "verification_status": "not_run",
+        "verification_reason": "verification_not_required",
+        "final_decision": "skip_stage5_disabled",
+        "final_decision_reason": "stage5_disabled",
+        "selected_execution_mode": "baseline_only",
+        "stage5_prediction_available": False,
+        "target_orientation_available": False,
+        "use_stage5": False,
+        "use_orientation_prompt": False,
+        "fallback_to_baseline": True,
+        "shadow_used": False,
+        "shadow_accepted": False,
+        "triggered_reverification": False,
+    }
+    auto_route = None
+    agent_decision = decide_open6dor_agent_action(
+        stage5_enabled=False,
+        orientation_mode="",
+        stage5_gate_reason="stage5_disabled",
+        fallback_required=False,
+        parser_confidence=None,
+        stage4_cache_available=False,
+    )
 
     def record_stage(name, fn):
         nonlocal failed_stage
@@ -965,34 +1137,236 @@ def process_dataset(task_dir):
             pipeline_mode = "legacy"
             parsed_info, picked_object_dict, target_position = run_legacy_pipeline()
 
+        parsed_info.setdefault("orientation_mode", infer_open6dor_stage5_mode(task_dir, task_info=task_info, parsed_info=parsed_info))
         init_position = picked_object_dict["center"]
         init_orientation = picked_object_dict["orientation"]
         target_orientation = parsed_info["target_orientation"]
 
         if STAGE5_OPTIONS.get("enabled"):
             stage5_start = time.perf_counter()
+            stage4_signals = load_open6dor_stage4_signals(task_dir)
+            agent_mode = resolve_agent_mode()
+            stage5_mode = infer_open6dor_stage5_mode(task_dir, task_info=task_info, parsed_info=parsed_info)
+
             try:
-                stage5_prediction = predict_from_stage4_dir(
-                    Path(task_dir) / "output" / "stage4",
-                    dataset="open6dor",
-                    checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
-                    device=STAGE5_OPTIONS.get("device", "auto"),
-                    num_points=STAGE5_OPTIONS.get("num_points", 1024),
-                )
-                if stage5_prediction and stage5_prediction.get("target_orientation"):
-                    target_orientation = stage5_prediction["target_orientation"]
-                    parsed_info["target_orientation"] = target_orientation
-                    print(f"[open6dor] stage5 target_orientation={target_orientation}")
-                    if lightweight_scene_graph is not None:
-                        lightweight_scene_graph["stage5_head"] = stage5_prediction
-                        if isinstance(lightweight_scene_graph.get("picked_object"), dict):
-                            lightweight_scene_graph["picked_object"]["stage5_head"] = stage5_prediction
-                            lightweight_scene_graph["picked_object"]["target_orientation"] = target_orientation
+                if agent_mode == "off":
+                    stage5_gate = should_apply_open6dor_stage5(task_dir, task_info=task_info, parsed_info=parsed_info)
+                    if not stage5_gate["apply"]:
+                        stage5_prediction = {
+                            "status": "skipped",
+                            "orientation_mode": stage5_gate["mode"],
+                            "skip_reason": stage5_gate["reason"],
+                        }
+                        agent_decision = {
+                            "dataset": "open6dor",
+                            "controller": "disabled",
+                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "task_type": "manipulation",
+                            "question_type_or_orientation_mode": stage5_gate.get("mode", ""),
+                            "applicable": False,
+                            "decision": "skip_stage5_due_to_mode_gating",
+                            "decision_reason": stage5_gate.get("reason"),
+                            "verification_status": "not_run",
+                            "selected_execution_mode": "baseline_only",
+                            "selected_actions": ["fallback_to_baseline_reasoning"],
+                            "stage5_allowed": False,
+                            "use_orientation_prompt": False,
+                            "fallback_to_baseline": True,
+                            "agent_signals": {
+                                **stage4_signals,
+                                "orientation_mode": stage5_gate.get("mode", ""),
+                                "legacy_mode_gating": True,
+                            },
+                        }
+                        print(
+                            f"[open6dor] stage5 skipped mode={stage5_gate['mode'] or 'unknown'} "
+                            f"reason={stage5_gate['reason']}"
+                        )
+                    else:
+                        stage5_prediction = predict_from_stage4_dir(
+                            stage4_signals["stage4_dir"],
+                            dataset="open6dor",
+                            checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
+                            device=STAGE5_OPTIONS.get("device", "auto"),
+                            num_points=STAGE5_OPTIONS.get("num_points", 1024),
+                        )
+                        if stage5_prediction and stage5_prediction.get("target_orientation"):
+                            target_orientation = stage5_prediction["target_orientation"]
+                            parsed_info["target_orientation"] = target_orientation
+                            print(f"[open6dor] stage5 target_orientation={target_orientation}")
+                            if lightweight_scene_graph is not None:
+                                lightweight_scene_graph["stage5_head"] = stage5_prediction
+                                if isinstance(lightweight_scene_graph.get("picked_object"), dict):
+                                    lightweight_scene_graph["picked_object"]["stage5_head"] = stage5_prediction
+                                    lightweight_scene_graph["picked_object"]["target_orientation"] = target_orientation
+                        agent_decision = {
+                            "dataset": "open6dor",
+                            "controller": "disabled",
+                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "task_type": "manipulation",
+                            "question_type_or_orientation_mode": stage5_mode,
+                            "applicable": bool(stage5_prediction),
+                            "decision": "direct_stage5_injection" if stage5_prediction else "skip_stage5_due_to_mode_gating",
+                            "decision_reason": "agent_mode_off",
+                            "verification_status": "accepted" if stage5_prediction else "rejected",
+                            "selected_execution_mode": "stage5_direct_verified" if stage5_prediction else "baseline_only",
+                            "selected_actions": ["run_stage5", "inject_scene_graph"] if stage5_prediction else ["fallback_to_baseline_reasoning"],
+                            "stage5_allowed": bool(stage5_prediction),
+                            "use_orientation_prompt": False,
+                            "fallback_to_baseline": not bool(stage5_prediction),
+                            "agent_signals": {
+                                **stage4_signals,
+                                "orientation_mode": stage5_mode,
+                                "legacy_mode_gating": True,
+                            },
+                        }
+                    agent_verification = {
+                        "verification_status": "accepted" if stage5_prediction and stage5_prediction.get("target_orientation") else "not_run",
+                        "verification_reason": "legacy_direct_stage5" if stage5_prediction else "verification_not_required",
+                        "final_decision": agent_decision.get("decision"),
+                        "final_decision_reason": agent_decision.get("decision_reason"),
+                        "selected_execution_mode": agent_decision.get("selected_execution_mode", "baseline_only"),
+                        "stage5_prediction_available": bool(stage5_prediction),
+                        "target_orientation_available": bool((stage5_prediction or {}).get("target_orientation")),
+                        "use_stage5": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+                        "use_orientation_prompt": False,
+                        "fallback_to_baseline": not bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+                        "shadow_used": False,
+                        "shadow_accepted": False,
+                        "triggered_reverification": False,
+                    }
+                    auto_route = {
+                        "controller": "agent_mode_off",
+                        "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                        "dataset_hint": "open6dor",
+                        "selected_dataset_agent": "disabled",
+                        "selected_execution_mode": agent_verification.get("selected_execution_mode", "baseline_only"),
+                        "route_reason": "agent_mode_off",
+                        "child_decision": agent_decision.get("decision"),
+                        "child_verification_status": agent_verification.get("verification_status", "not_run"),
+                    }
+                else:
+                    execution_band = infer_open6dor_execution_band(stage5_mode)
+                    stage5_gate = {
+                        "apply": execution_band in {"direct_allow", "conditional_verify"},
+                        "mode": stage5_mode,
+                        "reason": f"{execution_band}_mode",
+                    }
+                    agent_decision = decide_open6dor_agent_action(
+                        stage5_enabled=bool(STAGE5_OPTIONS.get("enabled")),
+                        orientation_mode=stage5_mode,
+                        stage5_gate_reason=stage5_gate.get("reason", ""),
+                        fallback_required=bool(object_context.get("fallback_required")),
+                        parser_confidence=(parsed_info or {}).get("parser_confidence"),
+                        stage4_cache_available=bool(stage4_signals.get("stage4_cache_available")),
+                        object_score=stage4_signals.get("object_score"),
+                        part_score=stage4_signals.get("part_score"),
+                        part_ratio=stage4_signals.get("part_ratio"),
+                        stage5_fallback_scene_graph_used=stage5_fallback_scene_graph_used,
+                        shadow_enabled=bool(AGENT_OPTIONS.get("shadow_eval")),
+                    )
+                    print(
+                        f"[open6dor] agent decision={agent_decision.get('decision')} "
+                        f"reason={agent_decision.get('decision_reason')}"
+                    )
+
+                    should_run_stage5 = agent_decision.get("decision") in {
+                        "use_stage5_direct",
+                        "use_stage5_conditional_verify",
+                        "shadow_stage5_for_debug",
+                    }
+                    if should_run_stage5:
+                        stage5_prediction = predict_from_stage4_dir(
+                            stage4_signals["stage4_dir"],
+                            dataset="open6dor",
+                            checkpoint_path=STAGE5_OPTIONS.get("checkpoint_path"),
+                            device=STAGE5_OPTIONS.get("device", "auto"),
+                            num_points=STAGE5_OPTIONS.get("num_points", 1024),
+                        )
+                    else:
+                        stage5_prediction = {
+                            "status": "skipped",
+                            "orientation_mode": stage5_mode,
+                            "skip_reason": agent_decision.get("decision_reason"),
+                        }
+
+                    agent_verification = verify_open6dor_agent_outcome(
+                        agent_decision,
+                        prediction=stage5_prediction if should_run_stage5 else None,
+                        orientation_mode=stage5_mode,
+                        stage4_cache_available=bool(stage4_signals.get("stage4_cache_available")),
+                        target_orientation=(stage5_prediction or {}).get("target_orientation"),
+                        direction_attributes=(stage5_prediction or {}).get("direction_attributes"),
+                    )
+                    print(
+                        f"[open6dor] agent verify={agent_verification.get('verification_status')} "
+                        f"reason={agent_verification.get('verification_reason')}"
+                    )
+
+                    if agent_verification.get("shadow_used"):
+                        stage5_shadow_prediction = stage5_prediction
+                        print(
+                            f"[open6dor] stage5 shadow mode={stage5_mode or 'unknown'} "
+                            f"accepted={agent_verification.get('shadow_accepted')}"
+                        )
+                    elif agent_verification.get("use_stage5") and stage5_prediction and stage5_prediction.get("target_orientation"):
+                        target_orientation = stage5_prediction["target_orientation"]
+                        parsed_info["target_orientation"] = target_orientation
+                        print(f"[open6dor] stage5 target_orientation={target_orientation}")
+                        if lightweight_scene_graph is not None:
+                            lightweight_scene_graph["stage5_head"] = stage5_prediction
+                            if isinstance(lightweight_scene_graph.get("picked_object"), dict):
+                                lightweight_scene_graph["picked_object"]["stage5_head"] = stage5_prediction
+                                lightweight_scene_graph["picked_object"]["target_orientation"] = target_orientation
+                    else:
+                        if not stage5_prediction or stage5_prediction.get("status") == "skipped":
+                            print(
+                                f"[open6dor] stage5 skipped mode={stage5_mode or 'unknown'} "
+                                f"reason={agent_decision.get('decision_reason')}"
+                            )
+                        else:
+                            print(
+                                f"[open6dor] stage5 rejected mode={stage5_mode or 'unknown'} "
+                                f"reason={agent_verification.get('verification_reason')}"
+                            )
+
+                    if agent_mode == "auto":
+                        auto_route = decide_auto_agent_route(
+                            task_dir=task_dir,
+                            orientation_mode=stage5_mode,
+                            child_decision={
+                                **agent_decision,
+                                "verification_status": agent_verification.get("verification_status"),
+                                "selected_execution_mode": agent_verification.get(
+                                    "selected_execution_mode",
+                                    agent_decision.get("selected_execution_mode"),
+                                ),
+                            },
+                        )
+                    else:
+                        auto_route = {
+                            "controller": "dataset_mode_fixed",
+                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "dataset_hint": "open6dor",
+                            "selected_dataset_agent": agent_decision.get("controller"),
+                            "selected_execution_mode": agent_verification.get(
+                                "selected_execution_mode",
+                                agent_decision.get("selected_execution_mode", "baseline_only"),
+                            ),
+                            "route_reason": "dataset_mode_fixed",
+                            "child_decision": agent_verification.get(
+                                "final_decision",
+                                agent_decision.get("decision"),
+                            ),
+                            "child_verification_status": agent_verification.get("verification_status", "not_run"),
+                        }
                 stage_times["stage5_head_sec"] = round(time.perf_counter() - stage5_start, 2)
             except Exception as exc:
                 stage5_prediction = {
                     "status": "error",
                     "error": str(exc),
+                    "orientation_mode": stage5_mode,
+                    "skip_reason": str(exc),
                 }
                 stage_times["stage5_head_sec"] = round(time.perf_counter() - stage5_start, 2)
                 print(f"[open6dor] stage5 head skipped for {task_dir}: {exc}")
@@ -1021,6 +1395,7 @@ def process_dataset(task_dir):
         elapsed = round(time.perf_counter() - start_time, 2)
         return {
             "task_dir": task_dir,
+            "sample_key": task_dir,
             "status": "success",
             "result_file": os.path.join(output_path, "result.json"),
             "elapsed_sec": elapsed,
@@ -1028,12 +1403,35 @@ def process_dataset(task_dir):
             "perception_cache_hit": perception_cache_hit,
             "pipeline_mode": pipeline_mode,
             "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
-            "stage5_applied": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+            "agent_controller": agent_decision.get("controller"),
+            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
+            "agent_selected_dataset_agent": (auto_route or {}).get("selected_dataset_agent", "disabled"),
+            "agent_route_reason": (auto_route or {}).get("route_reason", "agent_mode_off"),
+            "agent_decision": agent_verification.get("final_decision", agent_decision.get("decision")),
+            "agent_decision_reason": agent_verification.get("final_decision_reason", agent_decision.get("decision_reason")),
+            "agent_verification_status": agent_verification.get("verification_status"),
+            "agent_verification_reason": agent_verification.get("verification_reason"),
+            "agent_selected_execution_mode": agent_verification.get(
+                "selected_execution_mode",
+                agent_decision.get("selected_execution_mode"),
+            ),
+            "agent_stage5_allowed": agent_decision.get("stage5_allowed"),
+            "agent_used_stage5": bool(agent_verification.get("use_stage5")),
+            "agent_fallback_to_baseline": agent_verification.get("fallback_to_baseline", True),
+            "agent_triggered_reverification": bool(agent_verification.get("triggered_reverification")),
+            "agent_shadow_used": bool(agent_verification.get("shadow_used")),
+            "agent_shadow_accepted": bool(agent_verification.get("shadow_accepted")),
+            "agent_signals": agent_decision.get("agent_signals", {}),
+            "stage5_applied": bool(agent_verification.get("use_stage5")),
             "stage5_checkpoint": (stage5_prediction or {}).get("checkpoint_path"),
+            "stage5_mode": stage5_gate.get("mode"),
+            "stage5_skip_reason": (stage5_prediction or {}).get("skip_reason", ""),
+            "stage5_raw_direction_attributes": (stage5_prediction or {}).get("raw_direction_attributes", []),
             "stage5_direction_attributes": (stage5_prediction or {}).get("direction_attributes", []),
             "stage5_direction_vector": (stage5_prediction or {}).get("direction_vector"),
             "stage5_target_orientation": (stage5_prediction or {}).get("target_orientation"),
             "stage5_head": stage5_prediction,
+            "stage5_shadow_head": stage5_shadow_prediction,
             "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
             **stage_times,
         }
@@ -1043,6 +1441,7 @@ def process_dataset(task_dir):
         print(f"Error processing {task_dir}: {exc}")
         return {
             "task_dir": task_dir,
+            "sample_key": task_dir,
             "status": "error",
             "error": str(exc),
             "elapsed_sec": elapsed,
@@ -1051,12 +1450,35 @@ def process_dataset(task_dir):
             "perception_cache_hit": perception_cache_hit,
             "pipeline_mode": pipeline_mode,
             "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
-            "stage5_applied": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
+            "agent_controller": agent_decision.get("controller"),
+            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
+            "agent_selected_dataset_agent": (auto_route or {}).get("selected_dataset_agent", "disabled"),
+            "agent_route_reason": (auto_route or {}).get("route_reason", "agent_mode_off"),
+            "agent_decision": agent_verification.get("final_decision", agent_decision.get("decision")),
+            "agent_decision_reason": agent_verification.get("final_decision_reason", agent_decision.get("decision_reason")),
+            "agent_verification_status": agent_verification.get("verification_status"),
+            "agent_verification_reason": agent_verification.get("verification_reason"),
+            "agent_selected_execution_mode": agent_verification.get(
+                "selected_execution_mode",
+                agent_decision.get("selected_execution_mode"),
+            ),
+            "agent_stage5_allowed": agent_decision.get("stage5_allowed"),
+            "agent_used_stage5": bool(agent_verification.get("use_stage5")),
+            "agent_fallback_to_baseline": agent_verification.get("fallback_to_baseline", True),
+            "agent_triggered_reverification": bool(agent_verification.get("triggered_reverification")),
+            "agent_shadow_used": bool(agent_verification.get("shadow_used")),
+            "agent_shadow_accepted": bool(agent_verification.get("shadow_accepted")),
+            "agent_signals": agent_decision.get("agent_signals", {}),
+            "stage5_applied": bool(agent_verification.get("use_stage5")),
             "stage5_checkpoint": (stage5_prediction or {}).get("checkpoint_path"),
+            "stage5_mode": stage5_gate.get("mode"),
+            "stage5_skip_reason": (stage5_prediction or {}).get("skip_reason", ""),
+            "stage5_raw_direction_attributes": (stage5_prediction or {}).get("raw_direction_attributes", []),
             "stage5_direction_attributes": (stage5_prediction or {}).get("direction_attributes", []),
             "stage5_direction_vector": (stage5_prediction or {}).get("direction_vector"),
             "stage5_target_orientation": (stage5_prediction or {}).get("target_orientation"),
             "stage5_head": stage5_prediction,
+            "stage5_shadow_head": stage5_shadow_prediction,
             "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
             **stage_times,
         }
@@ -1085,8 +1507,27 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
                 "failed_stage": record.get("failed_stage"),
                 "result_file": record.get("result_file"),
                 "stage5_enabled": record.get("stage5_enabled"),
+                "agent_controller": record.get("agent_controller"),
+                "agent_policy": record.get("agent_policy"),
+                "agent_selected_dataset_agent": record.get("agent_selected_dataset_agent"),
+                "agent_route_reason": record.get("agent_route_reason"),
+                "agent_decision": record.get("agent_decision"),
+                "agent_decision_reason": record.get("agent_decision_reason"),
+                "agent_verification_status": record.get("agent_verification_status"),
+                "agent_verification_reason": record.get("agent_verification_reason"),
+                "agent_selected_execution_mode": record.get("agent_selected_execution_mode"),
+                "agent_stage5_allowed": record.get("agent_stage5_allowed"),
+                "agent_used_stage5": record.get("agent_used_stage5"),
+                "agent_fallback_to_baseline": record.get("agent_fallback_to_baseline"),
+                "agent_triggered_reverification": record.get("agent_triggered_reverification"),
+                "agent_shadow_used": record.get("agent_shadow_used"),
+                "agent_shadow_accepted": record.get("agent_shadow_accepted"),
+                "agent_signals": json.dumps(record.get("agent_signals", {}), ensure_ascii=False),
                 "stage5_applied": record.get("stage5_applied"),
                 "stage5_checkpoint": record.get("stage5_checkpoint"),
+                "stage5_mode": record.get("stage5_mode"),
+                "stage5_skip_reason": record.get("stage5_skip_reason"),
+                "stage5_raw_direction_attributes": json.dumps(record.get("stage5_raw_direction_attributes", []), ensure_ascii=False),
                 "stage5_direction_attributes": json.dumps(record.get("stage5_direction_attributes", []), ensure_ascii=False),
                 "stage5_direction_vector": json.dumps(record.get("stage5_direction_vector"), ensure_ascii=False),
                 "stage5_target_orientation": json.dumps(record.get("stage5_target_orientation"), ensure_ascii=False),
@@ -1107,7 +1548,9 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
         "speed_profile": run_context.get("speed_profile"),
         "total_records": len(export_records),
         "applied_count": sum(1 for item in export_records if item.get("stage5_applied")),
+        "skipped_count": sum(1 for item in export_records if item.get("stage5_skip_reason")),
         "error_count": sum(1 for item in export_records if item.get("status") == "error"),
+        "agent_summary": summarize_open6dor_agent_records(records),
         "records": export_records,
     }
     stable_name = (
@@ -1127,8 +1570,27 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
             "failed_stage",
             "result_file",
             "stage5_enabled",
+            "agent_controller",
+            "agent_policy",
+            "agent_selected_dataset_agent",
+            "agent_route_reason",
+            "agent_decision",
+            "agent_decision_reason",
+            "agent_verification_status",
+            "agent_verification_reason",
+            "agent_selected_execution_mode",
+            "agent_stage5_allowed",
+            "agent_used_stage5",
+            "agent_fallback_to_baseline",
+            "agent_triggered_reverification",
+            "agent_shadow_used",
+            "agent_shadow_accepted",
+            "agent_signals",
             "stage5_applied",
             "stage5_checkpoint",
+            "stage5_mode",
+            "stage5_skip_reason",
+            "stage5_raw_direction_attributes",
             "stage5_direction_attributes",
             "stage5_direction_vector",
             "stage5_target_orientation",
@@ -1807,6 +2269,11 @@ if __name__ == "__main__":
     sam_model = sam.get_model()
     orientation_model = orientation.get_model()
     ORIENTATION_TEMPLATES = load_orientation_templates()
+    stage5_mode_spec = args.stage5_open6dor_modes or os.getenv("SOFAR_STAGE5_OPEN6DOR_MODES", "")
+    allowed_stage5_modes = _parse_stage5_mode_list(
+        stage5_mode_spec,
+        default_modes=DEFAULT_STAGE5_OPEN6DOR_ALLOWED_MODES,
+    )
 
     RUN_OPTIONS.update(
         {
@@ -1825,6 +2292,18 @@ if __name__ == "__main__":
             "checkpoint_path": args.stage5_checkpoint,
             "device": args.stage5_device,
             "num_points": args.stage5_num_points,
+            "allowed_modes": allowed_stage5_modes,
+        }
+    )
+    AGENT_OPTIONS.clear()
+    AGENT_OPTIONS.update(
+        {
+            "mode": args.agent_mode or ("dataset" if args.use_stage5_head else "off"),
+            "policy": args.agent_policy,
+            "save_trace": bool(args.agent_save_trace),
+            "debug_dir": args.agent_debug_dir,
+            "shadow_eval": bool(args.agent_shadow_eval),
+            "extended_actions": bool(args.agent_extended_actions),
         }
     )
     if STAGE5_OPTIONS["enabled"]:
@@ -1833,6 +2312,18 @@ if __name__ == "__main__":
             print(f"[open6dor] stage5_checkpoint={STAGE5_OPTIONS['checkpoint_path']}")
         print(f"[open6dor] stage5_device={STAGE5_OPTIONS['device']}")
         print(f"[open6dor] stage5_num_points={STAGE5_OPTIONS['num_points']}")
+        if "all" in STAGE5_OPTIONS["allowed_modes"]:
+            print("[open6dor] stage5_open6dor_modes=all")
+        else:
+            print("[open6dor] stage5_open6dor_modes=" + ",".join(sorted(STAGE5_OPTIONS["allowed_modes"])))
+    print(f"[open6dor] agent_mode={AGENT_OPTIONS['mode']}")
+    print(f"[open6dor] agent_policy={AGENT_OPTIONS['policy']}")
+    if AGENT_OPTIONS["save_trace"]:
+        print("[open6dor] agent_trace=enabled")
+    if AGENT_OPTIONS["shadow_eval"]:
+        print("[open6dor] agent_shadow_eval=enabled")
+    if AGENT_OPTIONS["extended_actions"]:
+        print("[open6dor] agent_extended_actions=requested (no-op in v1)")
 
     pending_dataset_paths = [p for p in dataset_paths if p not in processed_task_dirs]
     skipped_existing = []
@@ -1874,3 +2365,12 @@ if __name__ == "__main__":
     write_json_outputs(summary, output_dir, run_context["summary_name"], run_id)
     if STAGE5_OPTIONS.get("enabled"):
         write_stage5_integration_outputs(output_dir, run_id, summary, run_context)
+        if AGENT_OPTIONS.get("save_trace") or AGENT_OPTIONS.get("mode") in {"dataset", "auto"}:
+            debug_dir = write_agent_trace_bundle(
+                records=summary.get("records", []),
+                output_dir=output_dir,
+                dataset="open6dor",
+                run_id=run_id,
+                debug_root=AGENT_OPTIONS.get("debug_dir"),
+            )
+            print(f"[open6dor] agent_debug_dir={debug_dir}")

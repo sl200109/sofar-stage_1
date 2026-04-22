@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import numpy as np
 import torch
 
+from open6dor.utils import build_orientation_template_hints, load_orientation_templates
 from serve import runtime_paths
 from serve.spatialbench_stage5 import describe_direction_vector
 from orientation.models.PartConditionedOrientationHead import PartConditionedOrientationHead
@@ -65,6 +66,11 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     if not np.isfinite(parsed):
         return default
     return parsed
+
+
+@lru_cache(maxsize=1)
+def _cached_open6dor_templates() -> Dict[str, Dict[str, Any]]:
+    return load_orientation_templates()
 
 
 def _build_prior_vector(cache_payload: Dict[str, Any]) -> List[float]:
@@ -131,10 +137,7 @@ def _build_instruction(dataset: str, cache_payload: Dict[str, Any]) -> str:
 def _infer_direction_attributes(dataset: str, cache_payload: Dict[str, Any]) -> List[str]:
     parser_output = cache_payload.get("parser_output", {}) or {}
     if dataset == "open6dor":
-        values = parser_output.get("direction_attributes") or []
-        if not isinstance(values, list):
-            values = [str(values)]
-        return [str(item).strip() for item in values if str(item or "").strip()]
+        return _infer_open6dor_direction_attributes(cache_payload)
 
     functional_part = str(parser_output.get("functional_part", "") or "").strip()
     if functional_part:
@@ -149,6 +152,105 @@ def _vector_to_orientation_dict(direction_attributes: Iterable[str], direction_v
     attrs = [str(item).strip() for item in direction_attributes if str(item or "").strip()]
     vector = [round(float(v), 6) for v in np.asarray(direction_vector, dtype=np.float32).reshape(-1)[:3]]
     return {attr: vector for attr in attrs}
+
+
+def _normalize_open6dor_attr_label(value: Any) -> str:
+    label = str(value or "").strip().lower().replace("_", " ")
+    label = " ".join(label.split())
+    aliases = {
+        "top up": "top",
+        "top_up": "top",
+        "bottom down": "bottom",
+        "bottom_down": "bottom",
+        "cap left bottom right": "cap",
+        "cap_left_bottom_right": "cap",
+        "cap right bottom left": "cap",
+        "cap_right_bottom_left": "cap",
+        "plug right": "plug end",
+        "plug_right": "plug end",
+        "plug left": "plug end",
+        "plug_left": "plug end",
+        "handle left": "handle",
+        "handle_left": "handle",
+        "handle right": "handle",
+        "handle_right": "handle",
+        "upright": "top",
+        "upside down": "top",
+        "upside_down": "top",
+    }
+    return aliases.get(label, label)
+
+
+def _dedupe_preserve_order(values: Iterable[str]) -> List[str]:
+    result: List[str] = []
+    seen = set()
+    for item in values:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _preferred_open6dor_attrs(orientation_mode: str, template_attrs: List[str]) -> List[str]:
+    orientation_mode = str(orientation_mode or "").strip().lower().replace(" ", "_")
+    if orientation_mode.startswith("plug_"):
+        candidates = ["silver plug end", "plug end", "larger end"]
+    elif orientation_mode.startswith("handle_"):
+        candidates = ["handle"]
+    elif orientation_mode in {"upright", "upright_lens_forth", "upside_down", "upside_down_textual"}:
+        candidates = ["top", "bottom", "cap", "opening"]
+    elif orientation_mode == "lying_flat":
+        candidates = ["larger face", "front cover", "screen", "back"]
+    elif orientation_mode in {"lying_sideways", "clip_sideways", "sideways", "sideways_textual"}:
+        candidates = ["clip side", "spine", "handle", "side"]
+    elif orientation_mode.startswith("cap_"):
+        candidates = ["cap", "top", "bottom"]
+    else:
+        candidates = []
+
+    if not template_attrs:
+        return candidates
+    template_map = {_normalize_name(attr): attr for attr in template_attrs}
+    preferred = [template_map[_normalize_name(attr)] for attr in candidates if _normalize_name(attr) in template_map]
+    return _dedupe_preserve_order(preferred or template_attrs)
+
+
+def _infer_open6dor_direction_attributes(cache_payload: Dict[str, Any]) -> List[str]:
+    parser_output = cache_payload.get("parser_output", {}) or {}
+    picked_object = parser_output.get("picked_object") or parser_output.get("target_object") or ""
+    orientation_mode = parser_output.get("orientation_mode") or ""
+    raw_values = parser_output.get("direction_attributes") or []
+    if not isinstance(raw_values, list):
+        raw_values = [str(raw_values)]
+
+    template_hints = build_orientation_template_hints(picked_object, _cached_open6dor_templates())
+    template_attrs = [str(item).strip() for item in template_hints.get("direction_attributes", []) if str(item or "").strip()]
+    template_map = {_normalize_name(attr): attr for attr in template_attrs}
+
+    explicit_matches: List[str] = []
+    for value in raw_values:
+        normalized = _normalize_open6dor_attr_label(value)
+        if normalized in template_map:
+            explicit_matches.append(template_map[normalized])
+
+    explicit_matches = _dedupe_preserve_order(explicit_matches)
+    if explicit_matches:
+        return explicit_matches
+
+    preferred = _preferred_open6dor_attrs(orientation_mode, template_attrs)
+    if preferred:
+        return preferred[:1]
+
+    normalized_raw = _dedupe_preserve_order(_normalize_open6dor_attr_label(value) for value in raw_values)
+    if normalized_raw:
+        return normalized_raw[:1]
+
+    return template_attrs[:1]
 
 
 def _format_direction_string(direction_vector: Iterable[float]) -> str:
@@ -244,6 +346,11 @@ def predict_from_stage4_dir(
     instruction = _build_instruction(dataset, cache_payload)
     prior_vector = _build_prior_vector(cache_payload)
     direction_vector = predictor.predict(object_points, part_points, instruction, prior_vector)
+    parser_output = cache_payload.get("parser_output", {}) or {}
+    raw_direction_attributes = parser_output.get("direction_attributes") or []
+    if not isinstance(raw_direction_attributes, list):
+        raw_direction_attributes = [str(raw_direction_attributes)]
+    raw_direction_attributes = [str(item).strip() for item in raw_direction_attributes if str(item or "").strip()]
     direction_attributes = _infer_direction_attributes(dataset, cache_payload)
     target_orientation = _vector_to_orientation_dict(direction_attributes, direction_vector)
 
@@ -257,6 +364,7 @@ def predict_from_stage4_dir(
         "instruction": instruction,
         "prior_vector": prior_vector,
         "direction_vector": direction_vector,
+        "raw_direction_attributes": raw_direction_attributes,
         "direction_attributes": direction_attributes,
         "target_orientation": target_orientation,
         "target_object": (cache_payload.get("parser_output", {}) or {}).get("target_object")

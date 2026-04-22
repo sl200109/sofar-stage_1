@@ -12,7 +12,10 @@ from serve.system_prompts import (
     stage2_part_parser_prompt,
     vqa_parsing_prompt,
     vqa_reasoning_prompt,
+    vqa_reasoning_stage5_axis_prompt,
+    vqa_reasoning_stage5_camera_prompt,
     vqa_reasoning_stage5_prompt,
+    vqa_reasoning_stage5_reference_prompt,
 )
 
 
@@ -990,7 +993,18 @@ def vqa_parsing(qwen_model, processor, image_path, instruction):
 
 def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_graph, eval=False, stage5_context=None):
     use_stage5_prompt = bool(stage5_context and stage5_context.get("applicable"))
-    system_prompt = vqa_reasoning_stage5_prompt if use_stage5_prompt else vqa_reasoning_prompt
+    if use_stage5_prompt:
+        prompt_variant = str(stage5_context.get("prompt_variant") or "").strip()
+        if prompt_variant == "axis_direction":
+            system_prompt = vqa_reasoning_stage5_axis_prompt
+        elif prompt_variant == "reference_alignment":
+            system_prompt = vqa_reasoning_stage5_reference_prompt
+        elif prompt_variant == "camera_alignment":
+            system_prompt = vqa_reasoning_stage5_camera_prompt
+        else:
+            system_prompt = vqa_reasoning_stage5_prompt
+    else:
+        system_prompt = vqa_reasoning_prompt
     if eval:
         system_prompt += (
             "You will receive an image from the user, a question, and four options. "
@@ -1003,8 +1017,11 @@ def vqa_spatial_reasoning(qwen_model, processor, image_path, instruction, scene_
     if use_stage5_prompt:
         evidence_lines = stage5_context.get("evidence_lines") or []
         evidence_text = "\n".join(f"- {line}" for line in evidence_lines)
+        reasoning_focus = str(stage5_context.get("reasoning_focus") or "").strip()
+        focus_line = f"\nReasoning focus: {reasoning_focus}\n" if reasoning_focus else "\n"
         stage5_block = (
             f"\nStage 5 orientation evidence:\n{evidence_text}\n"
+            f"{focus_line}"
             "Use this evidence as a high-priority cue when the question is about the target object's orientation or part direction.\n"
         )
 
