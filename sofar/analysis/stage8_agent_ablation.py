@@ -16,6 +16,7 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--reuse-existing", action="store_true")
+    parser.add_argument("--reuse-source", action="store_true")
     return parser.parse_args()
 
 
@@ -38,6 +39,8 @@ def run_eval(dataset, mode, args):
         command += ["--limit", str(args.limit)]
     if args.reuse_existing:
         command += ["--reuse-existing"]
+    if args.reuse_source:
+        command += ["--reuse-source"]
     print("[stage8-ablation] running:", " ".join(command))
     subprocess.run(command, cwd=ROOT_DIR, check=True)
 

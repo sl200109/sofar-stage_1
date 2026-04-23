@@ -22,6 +22,11 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--reuse-existing", action="store_true")
+    parser.add_argument(
+        "--reuse-source",
+        action="store_true",
+        help="Reuse the latest dataset source summary/progress file instead of rerunning the underlying pipeline.",
+    )
     return parser.parse_args()
 
 
@@ -121,6 +126,39 @@ def _open6dor_bucket(record):
     if mode in {"upright", "upright_lens_forth", "plug_right", "lying_flat"}:
         return mode
     return "others"
+
+
+def _estimate_wall_time_from_source(source):
+    records = source.get("records", []) or source.get("samples", []) or []
+    total = 0.0
+    found = False
+    for item in records:
+        for field in ("total_sec", "elapsed_sec"):
+            value = item.get(field)
+            if value is not None:
+                try:
+                    total += float(value)
+                    found = True
+                    break
+                except Exception:
+                    continue
+    if found:
+        return round(total, 2)
+
+    processed = source.get("processed_count") or source.get("total_tasks") or len(records)
+    avg_success = source.get("avg_success_sec")
+    if avg_success is not None:
+        try:
+            return round(float(avg_success) * max(1, int(processed)), 2)
+        except Exception:
+            pass
+    return 0.0
+
+
+def _source_path_for_dataset(dataset):
+    if dataset == "spatialbench":
+        return repo_root() / "output" / "eval_spatialbench_progress.json"
+    return repo_root() / "output" / "open6dor_perception_summary.json"
 
 
 def build_open6dor_eval(source, wall_time_sec, eval_mode, agent_mode):
@@ -224,9 +262,34 @@ def evaluate_one(dataset, args, output_root):
         with summary_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
+    source_path = _source_path_for_dataset(dataset)
+    if args.reuse_source:
+        if not source_path.exists():
+            raise FileNotFoundError(f"reuse-source requested but source file is missing: {source_path}")
+        with source_path.open("r", encoding="utf-8") as f:
+            source = json.load(f)
+        wall_time = _estimate_wall_time_from_source(source)
+        print(f"[stage8-eval] reusing source: {source_path}")
+        if dataset == "spatialbench":
+            summary, per_sample_records, metrics_by_bucket = build_spatialbench_eval(
+                source, wall_time, args.eval_mode, args.agent_mode
+            )
+        else:
+            summary, per_sample_records, metrics_by_bucket = build_open6dor_eval(
+                source, wall_time, args.eval_mode, args.agent_mode
+            )
+        write_agent_eval_bundle(
+            output_dir=output_root,
+            dataset=dataset,
+            mode=args.eval_mode,
+            summary=summary,
+            per_sample_records=per_sample_records,
+            metrics_by_bucket=metrics_by_bucket,
+        )
+        return summary
+
     if dataset == "spatialbench":
         wall_time = run_command(spatialbench_command(args))
-        source_path = repo_root() / "output" / "eval_spatialbench_progress.json"
         with source_path.open("r", encoding="utf-8") as f:
             source = json.load(f)
         summary, per_sample_records, metrics_by_bucket = build_spatialbench_eval(
@@ -234,7 +297,6 @@ def evaluate_one(dataset, args, output_root):
         )
     else:
         wall_time = run_command(open6dor_command(args))
-        source_path = repo_root() / "output" / "open6dor_perception_summary.json"
         with source_path.open("r", encoding="utf-8") as f:
             source = json.load(f)
         summary, per_sample_records, metrics_by_bucket = build_open6dor_eval(

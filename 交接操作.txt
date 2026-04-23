@@ -1,173 +1,168 @@
 ﻿当前版本：2026-04-22
 
-1. 当前目标
-- 这轮优先验证 `Stage 6/7/8` 的规则版 agent 和独立评测框架是否稳定。
-- 这轮不是继续训练新 head，也不是继续做 mixed training。
-- `SpatialBench rule_v2` 已补上 `axis_direction` 的规则解码修正：
-  - 修正 `left/right` 轴语义
-  - 为 `axis_direction` 生成 `option ranking / preferred option`
-  - 在 `agent-mode dataset/auto` 下允许 `axis_direction` 直接使用规则答案，避免再被 VLM 把左/右翻反
-- 重点是：`dataset agent smoke -> auto agent smoke -> Stage 8 eval -> Stage 8 ablation`。
+1. 当前判断
+- 四个 20-case smoke 已经全部完成，不要重复跑：
+  - SpatialBench dataset agent smoke
+  - Open6DOR dataset agent smoke
+  - SpatialBench auto agent smoke
+  - Open6DOR auto agent smoke
+- Stage 8 的八条命令也已经完成，不要重复跑：
+  - SpatialBench baseline / direct_stage5 / agent eval
+  - Open6DOR baseline / direct_stage5 / agent eval
+  - SpatialBench ablation
+  - Open6DOR ablation
+- SpatialBench 当前结论：
+  - 顺序前 20 条主要用于验证 routing 是否合理，不适合作为“开始正式训练”的依据
+  - `stage5_applicable14` targeted pilot 已经证明 rule_v2 在适用子题上是可用的，但当前仍不启动 SpatialBench 全数据正式训练
+- Open6DOR 当前结论：
+  - controller 已经稳定，下一轮直接进入 Open6DOR 正式训练
 
 2. 先上传哪些文件夹
 最小上传：
-- `sofar/serve`
-- `sofar/spatialbench`
 - `sofar/open6dor`
-- `sofar/analysis`
-
-如果服务器训练代码或 checkpoint 不一致，再补传：
+- `sofar/serve`
 - `sofar/orientation`
+
+按需补传：
+- `sofar/analysis`
+  - 只有当服务器还没有最新 `--reuse-source` 版本的 `stage8_agent_eval.py / stage8_agent_ablation.py` 时才补传
 - `sofar/output/stage5_open6dor_train`
-- `sofar/output/stage5_spatialbench_train`
+  - 如果服务器上没有上一轮 `Open6DOR-only` 的 best checkpoint，需要补传这个文件夹以便 warm-start
 
 3. 服务器执行步骤
 
-Step 1：SpatialBench 20-case dataset agent smoke
+Step 1：增量补 Open6DOR Stage 3 cache
 命令：
 `cd /data/coding/SoFar`
-`python spatialbench/eval_spatialbench.py --limit 20 --reset-progress --use-stage5-head --agent-mode dataset --agent-save-trace --speed-profile conservative`
-意义：验证 SpatialBench 专用 agent 是否只在适合题型上启用 Stage 5，并把 decision / verify 写入 summary 与 trace。
-成功后应该看到的关键信号：
-- `sofar/output/agent_debug/spatialbench/<run_id>/` 已生成
-- `sofar/output/eval_spatialbench_progress.json` 中出现：
-  - `agent_decision_distribution`
-  - `agent_verification_distribution`
-  - `agent_selected_execution_mode_distribution`
-  - `agent_selected_dataset_agent_distribution`
-- 日志里出现 `agent decision=...` 和 `agent verify=...`
-失败时优先看：
-- 本轮最新 `sofar/output/eval_spatialbench_*.log`
-- `sofar/output/eval_spatialbench_progress.json`
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile conservative`
+意义：
+- 这一步只补还没有 Stage 3 cache 的 Open6DOR case
+- 脚本会先过滤已有 cache，再对 pending case 应用 `--limit 500`
+- 这一步不会把已经做过的样本整批重跑一遍
+做完后要检查什么：
+- 日志里出现 `skipped X tasks with existing Stage 3 cache`
+- 日志里出现 `stage3 grounding reduced to 500 pending tasks` 或更小的 pending 数
+- 运行没有出现新的系统性报错
+做完后先不用回传结果。
 
-Step 1B：SpatialBench `stage5_applicable14` 定向补 cache 与 targeted smoke（rule_v2）
+Step 2：增量补 Open6DOR Stage 4 point cache
 命令：
 `cd /data/coding/SoFar`
-`python spatialbench/eval_spatialbench.py --pilot stage5_applicable14 --stage3-grounding-only --speed-profile conservative`
-`python spatialbench/eval_spatialbench.py --pilot stage5_applicable14 --stage4-pointdata-only --speed-profile conservative`
-`python spatialbench/eval_spatialbench.py --pilot stage5_applicable14 --reset-progress --use-stage5-head --agent-mode dataset --agent-save-trace --speed-profile conservative`
-意义：顺序前 20 条很可能命不中真正适合 `Stage 5` 的子题，这一步专门针对当前定向 pilot 做 `rule_v2` 验证，确认 `axis_direction / reference_alignment / camera_alignment` 三类中至少有一部分能真正调用 Stage 5。当前最重要的是验证 `axis_direction` 不再整组答反。
-成功后应该看到的关键信号：
-- 日志里出现 `stage5 apply`，并且能看到 `prompt_variant=axis_direction|reference_alignment|camera_alignment`
-- 如果命中 `axis_direction`，日志里额外出现 `axis rule override=...`
-- `sofar/output/eval_spatialbench_progress.json` 里的 `agent_used_stage5_count` 大于 `0`
-- `sofar/output/eval_spatialbench_progress.json` 里的 `run_filter.pilot = stage5_applicable14`
-失败时优先看：
-- 本轮最新 `sofar/output/eval_spatialbench_*.log`
-- `sofar/output/eval_spatialbench_progress.json`
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile conservative`
+意义：
+- 这一步把刚刚新增的 Stage 3 结果继续变成 Stage 4 point cache
+- 仍然是增量模式，也会自动跳过已有 Stage 4 cache
+做完后要检查什么：
+- 日志里出现 `skipped X tasks with existing Stage 4 cache`
+- 日志里出现 `stage4 point-data reduced to 500 pending tasks` 或更小的 pending 数
+- 没有出现大面积 point cache 生成失败
+做完后先不用回传结果。
 
-Step 2：Open6DOR 20-case dataset agent smoke
+Step 2B：如果服务器时间够，再追加第二批 500（可选）
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --limit 20 --reset-progress --rerun-existing --use-stage5-head --agent-mode dataset --agent-shadow-eval --agent-save-trace --speed-profile conservative`
-意义：验证 Open6DOR 专用 agent 是否正确区分 `direct_allow / conditional_verify / baseline_only / shadow`。
-成功后应该看到的关键信号：
-- `sofar/output/agent_debug/open6dor/<run_id>/` 已生成
-- `sofar/output/open6dor_perception_summary.json` 中出现 `agent_summary`
-- `sofar/output/stage5_open6dor_pipeline_records.json` 的样本记录中出现：
-  - `agent_decision`
-  - `agent_verification_status`
-  - `agent_selected_execution_mode`
-  - `agent_shadow_used`
-  - `agent_shadow_accepted`
-失败时优先看：
-- 本轮最新 `sofar/output/open6dor_perception_*.log`
-- `sofar/output/open6dor_perception_summary.json`
-- `sofar/output/stage5_open6dor_pipeline_records.json`
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile conservative`
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile conservative`
+意义：
+- 如果第一批 500 很顺，直接再补第二批 500，会比只用一小批新数据更适合做“正式训练 Round 1”
+- 如果服务器时间不够，可以跳过这一步，先用第一批开始训练
+做完后要检查什么：
+- 同 Step 1 / Step 2
+做完后先不用回传结果。
 
-Step 3：SpatialBench 20-case auto agent smoke
+Step 3：做一次 Open6DOR dry-run
 命令：
 `cd /data/coding/SoFar`
-`python spatialbench/eval_spatialbench.py --limit 20 --reset-progress --use-stage5-head --agent-mode auto --agent-save-trace --speed-profile conservative`
-意义：验证 auto router 是否能在 SpatialBench 样本上选中正确的数据集 agent。
-成功后应该看到的关键信号：
-- `agent_controller_distribution` 中出现 auto router
-- `agent_selected_dataset_agent_distribution` 中 SpatialBench 子 agent 不为空
-- `agent_selected_execution_mode_distribution` 有合理分布
-失败时优先看：
-- 本轮最新 `sofar/output/eval_spatialbench_*.log`
-- `sofar/output/eval_spatialbench_progress.json`
+`python orientation/stage5_dry_run.py --repo-root /data/coding/SoFar --prefer-dataset open6dor --batch-size 4 --num-points 1024 --max-samples 16 --device cuda`
+意义：
+- 在真正训练前，先确认 Stage 4 manifest、Dataset、DataLoader、Head 前向都还是通的
+- 这一步是为了提前挡住 manifest 空、cache 读不到、batch 拼接异常这类低级问题
+做完后要检查什么：
+- dry-run 正常输出 `manifest_path / dataset_size / loss / summary_path`
+- `prefer_dataset=open6dor` 选到的是 Open6DOR manifest
+做完后先不用回传结果。
 
-Step 4：Open6DOR 20-case auto agent smoke
+Step 4：开始 Open6DOR-only 正式训练 Round 1
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --limit 20 --reset-progress --rerun-existing --use-stage5-head --agent-mode auto --agent-shadow-eval --agent-save-trace --speed-profile conservative`
-意义：验证 auto router 是否能在 Open6DOR 样本上选中正确的数据集 agent。
-成功后应该看到的关键信号：
-- `agent_controller_distribution` 中出现 auto router
-- `agent_selected_dataset_agent_distribution` 中 Open6DOR 子 agent 不为空
-- `agent_selected_execution_mode_distribution` 有合理分布
-失败时优先看：
-- 本轮最新 `sofar/output/open6dor_perception_*.log`
-- `sofar/output/open6dor_perception_summary.json`
-- `sofar/output/stage5_open6dor_pipeline_records.json`
+`python orientation/stage5_train_pilot.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train_round1_formal --dataset-mode open6dor --batch-size 4 --num-points 1024 --max-train-samples 320 --max-val-samples 64 --max-test-samples 64 --epochs 30 --min-label-confidence 0.3 --init-checkpoint /data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_best.pth --device cuda`
+意义：
+- 这是下一轮正式训练的主命令
+- 仍然只训练 `Open6DOR-only`，不再做 mixed training
+- 使用上一轮 `Open6DOR-only best checkpoint` warm-start，可以减少从头训练的波动
+做完后要检查什么：
+- 输出目录生成：`/data/coding/SoFar/output/stage5_open6dor_train_round1_formal`
+- 训练结束后至少应有：
+  - `stage5_train_manifest.jsonl`
+  - `stage5_val_manifest.jsonl`
+  - `stage5_test_manifest.jsonl`
+  - `stage5_pilot_best.pth`
+  - `stage5_pilot_last.pth`
+- summary 里能看到：
+  - `train_size / val_size / test_size`
+  - `best_val_loss`
+  - `final_test_metrics`
+如果服务器显存紧张：
+- 先把 `--batch-size 4` 改成 `2` 再重试，不要直接改别的逻辑。
 
-Step 5：Stage 8 eval smoke
+Step 5：做未见样本评测
 命令：
 `cd /data/coding/SoFar`
-`python analysis/stage8_agent_eval.py --dataset spatialbench --eval-mode baseline --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_eval.py --dataset spatialbench --eval-mode direct_stage5 --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_eval.py --dataset spatialbench --eval-mode agent --agent-mode dataset --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_eval.py --dataset open6dor --eval-mode baseline --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_eval.py --dataset open6dor --eval-mode direct_stage5 --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_eval.py --dataset open6dor --eval-mode agent --agent-mode dataset --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-意义：验证独立 eval runner 是否能稳定产出 baseline / direct_stage5 / agent 三组结果。
-成功后应该看到的关键信号：
-- `sofar/output/agent_eval_smoke/<dataset>/<mode>/summary.json`
-- `sofar/output/agent_eval_smoke/<dataset>/<mode>/per_sample.jsonl`
-- `sofar/output/agent_eval_smoke/<dataset>/<mode>/metrics_by_bucket.json`
-- `sofar/output/agent_eval_smoke/<dataset>/<mode>/decision_breakdown.csv`
-失败时优先看：
-- 本轮 Stage 8 终端输出
-- 如有部分产物生成，则优先看对应 `summary.json`
-- 如未生成产物，则回看最新 `sofar/output/eval_spatialbench_*.log` 或 `sofar/output/open6dor_perception_*.log`
+`python orientation/stage5_eval_unseen.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train_round1_formal --checkpoint /data/coding/SoFar/output/stage5_open6dor_train_round1_formal/stage5_pilot_best.pth --dataset-mode open6dor --subset test --batch-size 4 --num-points 1024 --max-samples 128 --device cuda`
+意义：
+- 这一步用统一脚本评估新 checkpoint 在未训练样本上的泛化
+- 这样我们可以直接和上一轮 `Open6DOR-only` 结果做对比
+做完后要检查什么：
+- 输出里出现：
+  - `weighted_loss`
+  - `mean_cosine`
+  - `mean_angle_deg`
+  - `median_angle_deg`
+- `manifest_path` 指向新的 `stage5_open6dor_train_round1_formal` 目录下的 eval manifest
 
-Step 6：Stage 8 ablation smoke
+Step 6：用新 checkpoint 做一次 Open6DOR 20-case 回接 smoke
 命令：
 `cd /data/coding/SoFar`
-`python analysis/stage8_agent_ablation.py --dataset spatialbench --agent-mode dataset --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-`python analysis/stage8_agent_ablation.py --dataset open6dor --agent-mode dataset --limit 20 --output-dir /data/coding/SoFar/output/agent_eval_smoke`
-意义：把三组模式打包成一份总的消融结果，生成总表和总 json。
-成功后应该看到的关键信号：
-- `sofar/output/agent_eval_smoke/ablation_summary.json`
-- `sofar/output/agent_eval_smoke/ablation_table.csv`
-失败时优先看：
-- `sofar/output/agent_eval_smoke` 下已经生成到哪一步
-- 对应数据集子目录中的 `summary.json`
+`python open6dor/open6dor_perception.py --limit 20 --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_train_round1_formal/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative`
+意义：
+- 这一步不是重新做 Stage 8，而是验证“新训练出来的 checkpoint 能不能稳定回接完整 Open6DOR pipeline”
+- 需要确认新 checkpoint 不会把原来稳定的 agent controller 搞坏
+做完后要检查什么：
+- `20/20` 正常跑完
+- `sofar/output/open6dor_perception_summary_*.json` 正常生成
+- `sofar/output/stage5_open6dor_pipeline_records_*.json` 正常生成
+- `sofar/output/agent_debug/open6dor/<run_id>/` 正常生成
 
 4. 做完后回传哪些文件夹
-Step 1-4 做完后先回传：
+优先回传文件夹：
+- `sofar/output/stage5_open6dor_train_round1_formal`
 - `sofar/output/agent_debug`
 
-Step 1 额外补充：
-- `sofar/output/eval_spatialbench_progress.json`
-- 本轮最新 `sofar/output/eval_spatialbench_*.log`
-
-Step 1B 额外补充：
-- `sofar/output/eval_spatialbench_progress.json`
-- 本轮最新 `sofar/output/eval_spatialbench_*.log`
-
-Step 2 额外补充：
-- `sofar/output/open6dor_perception_summary.json`
-- `sofar/output/stage5_open6dor_pipeline_records.json`
-- `sofar/output/stage5_open6dor_pipeline_records.csv`
+必要补充文件：
+- 本轮最新 `sofar/output/open6dor_perception_summary_*.json`
+- 本轮最新 `sofar/output/stage5_open6dor_pipeline_records_*.json`
+- `sofar/output/stage5_manifest_summary.json`
 - 本轮最新 `sofar/output/open6dor_perception_*.log`
-
-Step 5-6 做完后回传：
-- `sofar/output/agent_eval_smoke`
 
 5. 回传后我会怎么检查
 固定检查项：
-- `decision distribution`
-- `verification distribution`
-- `selected_execution_mode distribution`
-- `stage5_usage_precision`
-- `fallback_precision`
-- `shadow acceptance`
-- `按 bucket / mode 的结果`
+- `train_size / val_size / test_size` 是否明显高于上一轮小样本 pilot
+- `best_val_loss` 是否稳定下降
+- `mean_cosine / mean_angle_deg` 是否优于上一轮 `Open6DOR-only`
+- 新 checkpoint 回接后：
+  - `agent_decision distribution`
+  - `verification distribution`
+  - `selected_execution_mode distribution`
+  - `shadow acceptance`
+  - `fallback rate`
+- 是否出现新的系统性退化，例如：
+  - 全量被 reject
+  - 全量 fallback
+  - `target_orientation` 大面积空掉
 
 6. 这轮的判断标准
-- `SpatialBench`：重点看题型路由是否正确，并检查 `axis_direction` 是否从“整组答反”变成“规则解码可用”。
-- `Open6DOR`：重点看 verify / fallback / shadow 是否工作正常，不要求这轮就直接宣称性能提升。
-- `Stage 8`：重点看 baseline / direct_stage5 / agent 三组结果能否稳定跑齐并形成可对比表。
-
+- 只要 `Open6DOR` 这轮正式训练满足下面三条，就算通过：
+  1. 训练脚本稳定跑完，新的 best checkpoint 正常产出
+  2. 未见样本评测指标至少不劣于上一轮小样本 pilot
+  3. 新 checkpoint 能稳定回接到 Open6DOR pipeline，不引入大面积 fallback 或 crash
+- `SpatialBench` 当前不作为“是否开始正式训练”的判断对象；它继续作为 agent / routing / prompt 设计验证基准。

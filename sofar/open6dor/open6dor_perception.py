@@ -125,11 +125,17 @@ def _jsonify(value):
         return {str(key): _jsonify(val) for key, val in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonify(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, np.ndarray):
         return value.tolist()
     if isinstance(value, np.generic):
         return value.item()
     return value
+
+
+def _json_dumps_safe(value):
+    return json.dumps(_jsonify(value), ensure_ascii=False)
 
 
 def parse_args():
@@ -387,7 +393,7 @@ def save_progress(output_dir, run_id, dataset_root, dataset_paths, run_context):
     progress_path = progress_file_path(output_dir, run_context["artifact_tag"])
     tmp_path = progress_path.with_suffix(".tmp")
     with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
+        json.dump(_jsonify(summary), f, indent=2, ensure_ascii=False)
     tmp_path.replace(progress_path)
     return summary
 
@@ -1522,15 +1528,15 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
                 "agent_triggered_reverification": record.get("agent_triggered_reverification"),
                 "agent_shadow_used": record.get("agent_shadow_used"),
                 "agent_shadow_accepted": record.get("agent_shadow_accepted"),
-                "agent_signals": json.dumps(record.get("agent_signals", {}), ensure_ascii=False),
+                "agent_signals": _json_dumps_safe(record.get("agent_signals", {})),
                 "stage5_applied": record.get("stage5_applied"),
                 "stage5_checkpoint": record.get("stage5_checkpoint"),
                 "stage5_mode": record.get("stage5_mode"),
                 "stage5_skip_reason": record.get("stage5_skip_reason"),
-                "stage5_raw_direction_attributes": json.dumps(record.get("stage5_raw_direction_attributes", []), ensure_ascii=False),
-                "stage5_direction_attributes": json.dumps(record.get("stage5_direction_attributes", []), ensure_ascii=False),
-                "stage5_direction_vector": json.dumps(record.get("stage5_direction_vector"), ensure_ascii=False),
-                "stage5_target_orientation": json.dumps(record.get("stage5_target_orientation"), ensure_ascii=False),
+                "stage5_raw_direction_attributes": _json_dumps_safe(record.get("stage5_raw_direction_attributes", [])),
+                "stage5_direction_attributes": _json_dumps_safe(record.get("stage5_direction_attributes", [])),
+                "stage5_direction_vector": _json_dumps_safe(record.get("stage5_direction_vector")),
+                "stage5_target_orientation": _json_dumps_safe(record.get("stage5_target_orientation")),
                 "stage5_fallback_scene_graph_used": record.get("stage5_fallback_scene_graph_used"),
                 "elapsed_sec": record.get("elapsed_sec"),
                 "error": record.get("error"),
@@ -1634,13 +1640,13 @@ def run_stage2_parser_only(dataset_paths, output_dir, run_id, run_context):
             {
                 "task_dir": task_dir,
                 "picked_object": (parser_output or {}).get("picked_object", ""),
-                "related_objects": json.dumps((parser_output or {}).get("related_objects", []), ensure_ascii=False),
+                "related_objects": _json_dumps_safe((parser_output or {}).get("related_objects", [])),
                 "orientation_mode": (parser_output or {}).get("orientation_mode", ""),
                 "relation": (parser_output or {}).get("relation", ""),
                 "reference_frame": (parser_output or {}).get("reference_frame", ""),
-                "direction_attributes": json.dumps((parser_output or {}).get("direction_attributes", []), ensure_ascii=False),
+                "direction_attributes": _json_dumps_safe((parser_output or {}).get("direction_attributes", [])),
                 "parser_confidence": (parser_output or {}).get("parser_confidence"),
-                "routing_hints": json.dumps((parser_output or {}).get("routing_hints", {}), ensure_ascii=False),
+                "routing_hints": _json_dumps_safe((parser_output or {}).get("routing_hints", {})),
                 "error": error,
                 "instruction": prompt,
                 "parser_output": parser_output,
@@ -1936,14 +1942,14 @@ def run_stage3_grounding_only(dataset_paths, output_dir, run_id, run_context):
             {
                 "task_dir": task_dir,
                 "picked_object": (parser_output or {}).get("picked_object", ""),
-                "related_objects": json.dumps((parser_output or {}).get("related_objects", []), ensure_ascii=False),
+                "related_objects": _json_dumps_safe((parser_output or {}).get("related_objects", [])),
                 "orientation_mode": (parser_output or {}).get("orientation_mode", ""),
                 "reference_frame": (parser_output or {}).get("reference_frame", ""),
                 "part_query": part_query,
                 "status": status,
                 "failed_stage": failed_stage,
-                "object_bbox_xyxy": json.dumps(serialize_xyxy(object_bbox), ensure_ascii=False),
-                "part_bbox_xyxy": json.dumps(serialize_xyxy(part_bbox), ensure_ascii=False),
+                "object_bbox_xyxy": _json_dumps_safe(serialize_xyxy(object_bbox)),
+                "part_bbox_xyxy": _json_dumps_safe(serialize_xyxy(part_bbox)),
                 "object_score": object_score,
                 "part_score": part_score,
                 "roi_meta_path": cache_paths.get("roi_meta_path"),

@@ -737,9 +737,9 @@ agent 叙事如果写得过大，会被误读为“通用 agent 框架”
 
 ---
 
-## 25. 2026-04-21 工程落地状态
+## 25. 2026-04-22 工程落地状态
 
-当前本地代码已经不再停留在“agent 叙事”，而是进入了 Stage 6/7/8 的可运行实现阶段。
+当前工程已经不再停留在“agent 叙事”，而是进入了 Stage 6/7/8 的本地实现完成、服务器 smoke 已落地的阶段。
 
 ### 已完成
 - `semantic_orientation_agent.py`
@@ -750,37 +750,41 @@ agent 叙事如果写得过大，会被误读为“通用 agent 框架”
 - `SpatialBench`
   - 已支持 `agent-mode off|dataset|auto`
   - 已支持 centralized agent trace 输出
-  - 已把 `Stage 5` 从“直接注入”与“agent 路由”两条路径拆开
+  - 已完成 `rule_v2`：`axis_direction / reference_alignment / camera_alignment`
+  - 已完成 `stage5_applicable14` targeted pilot
 - `Open6DOR`
   - 已支持 `direct_allow / conditional_verify / baseline_only` 三档执行带
   - 已支持 `shadow_stage5_for_debug`
   - 已支持 verify 后拒绝 Stage 5 并回退 parser/baseline orientation
+  - 已完成 `dataset / auto` 两组 `20-case smoke`
 - `Stage 8`
   - 已新增独立评测 runner：`sofar/analysis/stage8_agent_eval.py`
   - 已新增独立消融 runner：`sofar/analysis/stage8_agent_ablation.py`
+  - 已完成 `baseline / direct_stage5 / agent` 三组小规模 smoke
 
 ### 当前代码与本文设计的一致性
 - `SpatialBench` 已落地为“题型路由优先”的 VQA agent
 - `Open6DOR` 已落地为“单目标操控朝向闭环”的 manipulation agent
 - `AutoModeSelection Agent` 已实现为上层路由接口，而不是额外重写一套新 pipeline
 
-### 仍待服务器验证
-- `SpatialBench` 20-case agent smoke
-- `Open6DOR` 20-case agent smoke
-- `Stage 8` baseline / direct_stage5 / agent 三组小规模评测
+### 当前阶段性结论
+- `SpatialBench`：
+  - 顺序前 `20` 条 `Stage 8` 结果主要说明“前 20 条并非适合 Stage 5 的题型”，不支持把 SpatialBench 直接推进到全数据正式训练
+  - `stage5_applicable14` targeted pilot 已证明：在适用子题上，agent 路由、prompt 分流与 verification 是可工作的
+- `Open6DOR`：
+  - 当前 controller 已经稳定具备 `direct / reject / fallback / shadow` 行为
+  - 因而下一步重点转为扩大 Open6DOR 有效训练数据并启动下一轮正式训练
 
-### 当前阶段结论
-本文的 agent 元素已经从“报告中的后续路线”推进到“本地代码中的统一控制层”。后续工作重点不再是继续堆叠 mixed training，而是验证：
-- agent 是否真的减少错误注入
-- agent 是否真的只在适合子题上调用 Stage 5
-- agent routing / verify 的额外延迟是否值得
+### 仍需谨慎的点
+- 当前 `Stage 8` 对 `Open6DOR` 的 `correct` 仍按 `status == success` 统计，属于控制器稳定性指标，而不是最终的 orientation ground-truth 指标
+- 因此现阶段可以据此决定“开始正式训练”，但还不能据此直接宣称最终 orientation 性能提升
 
 ### 当前工程文档分工
 为避免实验设计报告继续膨胀为交接手册，当前工程文档分工固定为：
-- `当前代码地图与交接总表.md`：当前阶段唯一总入口，负责主线代码地图、创新点映射、上传/回传规则和当前服务器操作步骤。
-- `baseline_stage5_tracker.md`：保留时间线、阶段性结论与风险判断。
-- `baseline_stage5_todolist.json`：只保留任务状态机，不写长篇解释。
-- `交接操作.txt`：只保留“当前该做什么”的服务器执行手册。
+- `当前代码地图与交接总表.md`：当前阶段唯一总入口，负责主线代码地图、创新点映射、上传/回传规则和当前服务器操作步骤
+- `baseline_stage5_tracker.md`：保留时间线、阶段性结论与风险判断
+- `baseline_stage5_todolist.json`：只保留任务状态机，不写长篇解释
+- `交接操作.txt`：只保留“当前该做什么”的服务器执行手册
 
 因此，本文档后续只继续承担两类内容：
 - 方法叙事与实验设计主线

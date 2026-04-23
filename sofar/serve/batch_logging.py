@@ -4,6 +4,21 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if hasattr(value, "tolist"):
+        try:
+            return value.tolist()
+        except Exception:
+            return str(value)
+    return value
+
+
 def make_run_id():
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -49,10 +64,11 @@ def write_json_outputs(data, output_dir, stable_name, run_id):
         timestamped_name = f"{stable_path.name}_{run_id}.json"
     timestamped_path = output_dir / timestamped_name
 
+    safe_data = _json_safe(data)
     with stable_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(safe_data, f, indent=2, ensure_ascii=False)
     with timestamped_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(safe_data, f, indent=2, ensure_ascii=False)
 
     print(f"[batch-log] wrote {stable_path}")
     print(f"[batch-log] wrote {timestamped_path}")
