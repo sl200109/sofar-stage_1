@@ -10,7 +10,7 @@
 - 在 `Stage 8 smoke` 跑通后，决定是否进入下一轮正式训练，以及优先在哪个数据集上扩大训练数据。
 
 ## 当前结论
-- 更新时间：`2026-04-22`
+- 更新时间：`2026-04-24`
 - `Stage 1-4`：主链已完成，`Stage 4 cache` 可作为 `Stage 5` 训练与推理输入。
 - `Stage 5`：训练结论已经收口。
   - `Open6DOR-only`：当前作为 Open6DOR 单域最优 head。
@@ -147,7 +147,7 @@
 ## 当前下一步
 - 当前最优先：开始 `Open6DOR` 下一轮正式训练。
 - 具体顺序已经收口为：
-  1. 增量补 `Open6DOR Stage 3/4 cache`
+  1. 先用 `100 + speed-profile off` 增量补 `Open6DOR Stage 3/4 cache`
   2. 跑一次 `Stage 5 dry-run`
   3. 跑 `Open6DOR-only` 正式训练 Round 1
   4. 跑未见样本评测

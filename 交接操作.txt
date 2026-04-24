@@ -1,4 +1,4 @@
-﻿当前版本：2026-04-22
+﻿当前版本：2026-04-24
 
 1. 当前判断
 - 四个 20-case smoke 已经全部完成，不要重复跑：
@@ -34,38 +34,38 @@
 Step 1：增量补 Open6DOR Stage 3 cache
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile conservative`
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 100 --speed-profile off`
 意义：
 - 这一步只补还没有 Stage 3 cache 的 Open6DOR case
-- 脚本会先过滤已有 cache，再对 pending case 应用 `--limit 500`
+- 脚本会先过滤已有 cache，再对 pending case 应用 `--limit 100`
 - 这一步不会把已经做过的样本整批重跑一遍
 做完后要检查什么：
 - 日志里出现 `skipped X tasks with existing Stage 3 cache`
-- 日志里出现 `stage3 grounding reduced to 500 pending tasks` 或更小的 pending 数
+- 日志里出现 `stage3 grounding reduced to 100 pending tasks` 或更小的 pending 数
 - 运行没有出现新的系统性报错
 做完后先不用回传结果。
 
 Step 2：增量补 Open6DOR Stage 4 point cache
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile conservative`
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 100 --speed-profile off`
 意义：
 - 这一步把刚刚新增的 Stage 3 结果继续变成 Stage 4 point cache
 - 仍然是增量模式，也会自动跳过已有 Stage 4 cache
 做完后要检查什么：
 - 日志里出现 `skipped X tasks with existing Stage 4 cache`
-- 日志里出现 `stage4 point-data reduced to 500 pending tasks` 或更小的 pending 数
+- 日志里出现 `stage4 point-data reduced to 100 pending tasks` 或更小的 pending 数
 - 没有出现大面积 point cache 生成失败
 做完后先不用回传结果。
 
-Step 2B：如果服务器时间够，再追加第二批 500（可选）
+Step 2B：如果前 100 顺利，再追加到 500（可选）
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile conservative`
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile conservative`
+`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile off`
+`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile off`
 意义：
-- 如果第一批 500 很顺，直接再补第二批 500，会比只用一小批新数据更适合做“正式训练 Round 1”
-- 如果服务器时间不够，可以跳过这一步，先用第一批开始训练
+- 如果前 100 很顺，继续补 500 个 pending case，会比只用一小批新数据更适合做“正式训练 Round 1”
+- 如果服务器时间不够，可以跳过这一步，先用当前已经补出的 cache 开始训练
 做完后要检查什么：
 - 同 Step 1 / Step 2
 做完后先不用回传结果。
@@ -166,3 +166,4 @@ Step 6：用新 checkpoint 做一次 Open6DOR 20-case 回接 smoke
   2. 未见样本评测指标至少不劣于上一轮小样本 pilot
   3. 新 checkpoint 能稳定回接到 Open6DOR pipeline，不引入大面积 fallback 或 crash
 - `SpatialBench` 当前不作为“是否开始正式训练”的判断对象；它继续作为 agent / routing / prompt 设计验证基准。
+

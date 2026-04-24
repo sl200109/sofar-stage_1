@@ -1,5 +1,5 @@
 ﻿{
-  "updated_at": "2026-04-22T23:20:00",
+  "updated_at": "2026-04-24T09:30:00",
   "tasks": [
     {
       "id": "stage5_single_domain_open6dor_training",
@@ -167,7 +167,7 @@
       "owner": "server",
       "status": "todo",
       "title": "执行 Open6DOR 正式训练前的增量 Stage 3/4 cache 扩容",
-      "notes": "下一轮建议先补 500 个 pending Open6DOR case；脚本会自动 skip 已有 Stage 3/4 cache"
+      "notes": "下一轮先用 100 + speed-profile off 快速增量试跑；确认成功后再追加 500 个 pending Open6DOR case；脚本会自动 skip 已有 Stage 3/4 cache"
     },
     {
       "id": "stage5_open6dor_formal_training_round1",
