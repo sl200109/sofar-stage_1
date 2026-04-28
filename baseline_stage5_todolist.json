@@ -1,5 +1,5 @@
-﻿{
-  "updated_at": "2026-04-24T09:30:00",
+{
+  "updated_at": "2026-04-24T18:30:00",
   "tasks": [
     {
       "id": "stage5_single_domain_open6dor_training",
@@ -165,30 +165,30 @@
     {
       "id": "stage5_open6dor_formal_cache_expansion",
       "owner": "server",
-      "status": "todo",
+      "status": "done",
       "title": "执行 Open6DOR 正式训练前的增量 Stage 3/4 cache 扩容",
-      "notes": "下一轮先用 100 + speed-profile off 快速增量试跑；确认成功后再追加 500 个 pending Open6DOR case；脚本会自动 skip 已有 Stage 3/4 cache"
+      "notes": "已完成 100 条 Stage 3 增量补跑与对应 Stage 4 补齐；日志已确认 skip 既有 cache，少量失败来自坏图或缺失 Stage 3 cache"
     },
     {
       "id": "stage5_open6dor_formal_training_round1",
       "owner": "server",
-      "status": "todo",
+      "status": "done",
       "title": "执行 Open6DOR-only 正式训练 Round 1",
-      "notes": "建议基于扩容后的 Stage 4 cache，使用上一轮 best checkpoint warm-start，输出到新的训练目录"
+      "notes": "已完成，output=stage5_open6dor_train_round1_formal；best_val_loss=0.201873，final_test_metrics.mean_cosine=0.546283"
     },
     {
       "id": "stage5_open6dor_formal_unseen_eval_round1",
       "owner": "server",
-      "status": "todo",
+      "status": "done",
       "title": "执行 Open6DOR 正式训练 Round 1 的未见样本评测",
-      "notes": "使用 stage5_eval_unseen.py 对新的 best checkpoint 做 test subset 评测"
+      "notes": "已完成；dataset_size=30，weighted_loss=0.34554，mean_cosine=0.50615，mean_angle_deg=50.4271"
     },
     {
       "id": "stage5_open6dor_round1_pipeline_reintegration",
       "owner": "server",
-      "status": "todo",
+      "status": "done",
       "title": "用新 Open6DOR checkpoint 做 20-case 回接 smoke",
-      "notes": "验证正式训练产出的新 checkpoint 在完整 Open6DOR pipeline 中仍能稳定接入 agent 路线"
+      "notes": "已完成；20/20 success, 0 error, avg_success_sec=16.35。mode 结论：plug_right 0->2, lying_flat 0->4, upright 6->0, clip_sideways 维持 shadow"
     },
     {
       "id": "stage8_open6dor_metric_refine",
@@ -196,6 +196,20 @@
       "status": "todo",
       "title": "补 Open6DOR Stage 8 的真实 orientation 指标",
       "notes": "当前 stage8_agent_eval.py 对 Open6DOR 的 correct 仍按 status==success 统计，后续需要替换为更严格的 orientation correctness 指标"
+    },
+    {
+      "id": "stage5_open6dor_mode_bucket_compare",
+      "owner": "local",
+      "status": "done",
+      "title": "完成 Open6DOR 新旧 checkpoint 的 mode-level 对比",
+      "notes": "已确认新 checkpoint 对 lying_flat 与部分 plug_right 提升明显，但在当前 20-case slice 上 upright 明显退化"
+    },
+    {
+      "id": "stage5_open6dor_modeaware_followup",
+      "owner": "server",
+      "status": "todo",
+      "title": "执行 Open6DOR mode-aware 后续验证",
+      "notes": "下一步优先做更大样本的 agent eval 或 targeted upright 检查，用于决定是走 mode-specific checkpoint 还是修 upright 接回策略"
     }
   ]
 }

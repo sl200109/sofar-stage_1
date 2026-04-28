@@ -1,4 +1,4 @@
-﻿当前版本：2026-04-24
+当前版本：2026-04-24
 
 1. 当前判断
 - 四个 20-case smoke 已经全部完成，不要重复跑：
@@ -15,155 +15,77 @@
   - 顺序前 20 条主要用于验证 routing 是否合理，不适合作为“开始正式训练”的依据
   - `stage5_applicable14` targeted pilot 已经证明 rule_v2 在适用子题上是可用的，但当前仍不启动 SpatialBench 全数据正式训练
 - Open6DOR 当前结论：
-  - controller 已经稳定，下一轮直接进入 Open6DOR 正式训练
+  - `formal Round 1` 训练、未见样本评测、20-case 回接 smoke 都已经完成
+  - 当前不是继续补训练主链的时候，而是要判断新 checkpoint 到底适合哪些 mode
+  - 新旧 20-case 对比结论：
+    - `plug_right`: `0 -> 2` 条通过 verify
+    - `lying_flat`: `0 -> 4` 条通过 verify
+    - `upright`: `6 -> 0` 条通过 verify
+    - `clip_sideways`: 继续 `shadow only`
+  - 所以这轮 head 不能直接记成“全 mode 默认最佳接回版本”
 
 2. 先上传哪些文件夹
 最小上传：
 - `sofar/open6dor`
 - `sofar/serve`
-- `sofar/orientation`
+- `sofar/analysis`
 
 按需补传：
-- `sofar/analysis`
-  - 只有当服务器还没有最新 `--reuse-source` 版本的 `stage8_agent_eval.py / stage8_agent_ablation.py` 时才补传
-- `sofar/output/stage5_open6dor_train`
-  - 如果服务器上没有上一轮 `Open6DOR-only` 的 best checkpoint，需要补传这个文件夹以便 warm-start
+- `sofar/output/stage5_open6dor_train_round1_formal`
+  - 如果服务器上没有这轮正式训练得到的新 checkpoint，再补传这个文件夹
+- `sofar/orientation`
+  - 只有训练脚本和服务器版本不一致时再补传
 
 3. 服务器执行步骤
 
-Step 1：增量补 Open6DOR Stage 3 cache
+Step 1：Open6DOR 100-case mode check
 命令：
 `cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 100 --speed-profile off`
+`python analysis/stage8_agent_eval.py --dataset open6dor --eval-mode agent --agent-mode dataset --limit 100 --output-dir /data/coding/SoFar/output/agent_eval_open6dor_modecheck`
 意义：
-- 这一步只补还没有 Stage 3 cache 的 Open6DOR case
-- 脚本会先过滤已有 cache，再对 pending case 应用 `--limit 100`
-- 这一步不会把已经做过的样本整批重跑一遍
+- 现在最重要的问题不是“训练链路通不通”，而是“新 checkpoint 在更大一点的样本上，到底是不是只对某些 mode 更好”
+- 这一步是用 agent eval 直接看 mode 分桶和使用率
 做完后要检查什么：
-- 日志里出现 `skipped X tasks with existing Stage 3 cache`
-- 日志里出现 `stage3 grounding reduced to 100 pending tasks` 或更小的 pending 数
-- 运行没有出现新的系统性报错
-做完后先不用回传结果。
+- `summary.json` 里是否有 `decision_distribution`
+- 是否能按 `stage5_mode` 看出 `plug_right / upright / lying_flat / others`
+- `agent` 结果是不是继续保持无 crash
 
-Step 2：增量补 Open6DOR Stage 4 point cache
-命令：
-`cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 100 --speed-profile off`
-意义：
-- 这一步把刚刚新增的 Stage 3 结果继续变成 Stage 4 point cache
-- 仍然是增量模式，也会自动跳过已有 Stage 4 cache
-做完后要检查什么：
-- 日志里出现 `skipped X tasks with existing Stage 4 cache`
-- 日志里出现 `stage4 point-data reduced to 100 pending tasks` 或更小的 pending 数
-- 没有出现大面积 point cache 生成失败
-做完后先不用回传结果。
-
-Step 2B：如果前 100 顺利，再追加到 500（可选）
-命令：
-`cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --stage3-grounding-only --limit 500 --speed-profile off`
-`python open6dor/open6dor_perception.py --stage4-pointdata-only --limit 500 --speed-profile off`
-意义：
-- 如果前 100 很顺，继续补 500 个 pending case，会比只用一小批新数据更适合做“正式训练 Round 1”
-- 如果服务器时间不够，可以跳过这一步，先用当前已经补出的 cache 开始训练
-做完后要检查什么：
-- 同 Step 1 / Step 2
-做完后先不用回传结果。
-
-Step 3：做一次 Open6DOR dry-run
-命令：
-`cd /data/coding/SoFar`
-`python orientation/stage5_dry_run.py --repo-root /data/coding/SoFar --prefer-dataset open6dor --batch-size 4 --num-points 1024 --max-samples 16 --device cuda`
-意义：
-- 在真正训练前，先确认 Stage 4 manifest、Dataset、DataLoader、Head 前向都还是通的
-- 这一步是为了提前挡住 manifest 空、cache 读不到、batch 拼接异常这类低级问题
-做完后要检查什么：
-- dry-run 正常输出 `manifest_path / dataset_size / loss / summary_path`
-- `prefer_dataset=open6dor` 选到的是 Open6DOR manifest
-做完后先不用回传结果。
-
-Step 4：开始 Open6DOR-only 正式训练 Round 1
-命令：
-`cd /data/coding/SoFar`
-`python orientation/stage5_train_pilot.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train_round1_formal --dataset-mode open6dor --batch-size 4 --num-points 1024 --max-train-samples 320 --max-val-samples 64 --max-test-samples 64 --epochs 30 --min-label-confidence 0.3 --init-checkpoint /data/coding/SoFar/output/stage5_open6dor_train/stage5_pilot_best.pth --device cuda`
-意义：
-- 这是下一轮正式训练的主命令
-- 仍然只训练 `Open6DOR-only`，不再做 mixed training
-- 使用上一轮 `Open6DOR-only best checkpoint` warm-start，可以减少从头训练的波动
-做完后要检查什么：
-- 输出目录生成：`/data/coding/SoFar/output/stage5_open6dor_train_round1_formal`
-- 训练结束后至少应有：
-  - `stage5_train_manifest.jsonl`
-  - `stage5_val_manifest.jsonl`
-  - `stage5_test_manifest.jsonl`
-  - `stage5_pilot_best.pth`
-  - `stage5_pilot_last.pth`
-- summary 里能看到：
-  - `train_size / val_size / test_size`
-  - `best_val_loss`
-  - `final_test_metrics`
-如果服务器显存紧张：
-- 先把 `--batch-size 4` 改成 `2` 再重试，不要直接改别的逻辑。
-
-Step 5：做未见样本评测
-命令：
-`cd /data/coding/SoFar`
-`python orientation/stage5_eval_unseen.py --repo-root /data/coding/SoFar --output-dir /data/coding/SoFar/output/stage5_open6dor_train_round1_formal --checkpoint /data/coding/SoFar/output/stage5_open6dor_train_round1_formal/stage5_pilot_best.pth --dataset-mode open6dor --subset test --batch-size 4 --num-points 1024 --max-samples 128 --device cuda`
-意义：
-- 这一步用统一脚本评估新 checkpoint 在未训练样本上的泛化
-- 这样我们可以直接和上一轮 `Open6DOR-only` 结果做对比
-做完后要检查什么：
-- 输出里出现：
-  - `weighted_loss`
-  - `mean_cosine`
-  - `mean_angle_deg`
-  - `median_angle_deg`
-- `manifest_path` 指向新的 `stage5_open6dor_train_round1_formal` 目录下的 eval manifest
-
-Step 6：用新 checkpoint 做一次 Open6DOR 20-case 回接 smoke
+Step 2：如果要继续聚焦 upright，再做 targeted 20-case
 命令：
 `cd /data/coding/SoFar`
 `python open6dor/open6dor_perception.py --limit 20 --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_train_round1_formal/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative`
 意义：
-- 这一步不是重新做 Stage 8，而是验证“新训练出来的 checkpoint 能不能稳定回接完整 Open6DOR pipeline”
-- 需要确认新 checkpoint 不会把原来稳定的 agent controller 搞坏
+- 这一步不是为了再验证“链路通不通”，而是继续积累 `upright` 退化 case，帮助决定后面是调 verify 还是做 mode-specific checkpoint
 做完后要检查什么：
-- `20/20` 正常跑完
-- `sofar/output/open6dor_perception_summary_*.json` 正常生成
-- `sofar/output/stage5_open6dor_pipeline_records_*.json` 正常生成
-- `sofar/output/agent_debug/open6dor/<run_id>/` 正常生成
+- `open6dor_perception_summary_*.json`
+- `stage5_open6dor_pipeline_records_*.json`
+- `agent_debug/open6dor/<run_id>/`
 
 4. 做完后回传哪些文件夹
 优先回传文件夹：
 - `sofar/output/stage5_open6dor_train_round1_formal`
 - `sofar/output/agent_debug`
+- `sofar/output/agent_eval_open6dor_modecheck`
 
 必要补充文件：
 - 本轮最新 `sofar/output/open6dor_perception_summary_*.json`
 - 本轮最新 `sofar/output/stage5_open6dor_pipeline_records_*.json`
-- `sofar/output/stage5_manifest_summary.json`
 - 本轮最新 `sofar/output/open6dor_perception_*.log`
 
 5. 回传后我会怎么检查
 固定检查项：
-- `train_size / val_size / test_size` 是否明显高于上一轮小样本 pilot
-- `best_val_loss` 是否稳定下降
-- `mean_cosine / mean_angle_deg` 是否优于上一轮 `Open6DOR-only`
-- 新 checkpoint 回接后：
-  - `agent_decision distribution`
-  - `verification distribution`
-  - `selected_execution_mode distribution`
-  - `shadow acceptance`
-  - `fallback rate`
-- 是否出现新的系统性退化，例如：
+- `plug_right / upright / lying_flat / others` 四个桶里各自的 apply / reject / shadow 比例
+- 新 checkpoint 的提升是不是集中在 `lying_flat / plug_right`
+- `upright` 是不是继续明显退化
+- 是否存在新的系统性退化，例如：
   - 全量被 reject
   - 全量 fallback
   - `target_orientation` 大面积空掉
+  - 某个 mode 大面积崩掉
 
 6. 这轮的判断标准
-- 只要 `Open6DOR` 这轮正式训练满足下面三条，就算通过：
-  1. 训练脚本稳定跑完，新的 best checkpoint 正常产出
-  2. 未见样本评测指标至少不劣于上一轮小样本 pilot
-  3. 新 checkpoint 能稳定回接到 Open6DOR pipeline，不引入大面积 fallback 或 crash
-- `SpatialBench` 当前不作为“是否开始正式训练”的判断对象；它继续作为 agent / routing / prompt 设计验证基准。
-
+- 这轮已经不是“能不能开始训练”的问题了，这一步的通过标准改成：
+  1. 能明确说清楚新 checkpoint 提升的是哪些 mode
+  2. 能明确说清楚退化的是哪些 mode
+  3. 能据此决定下一步走 `mode-specific 接回` 还是优先修 `upright`
+- `SpatialBench` 继续只作为 agent / routing / prompt 设计验证基准，不参与这一步判断。

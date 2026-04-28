@@ -13,12 +13,16 @@
 - 更新时间：`2026-04-24`
 - `Stage 1-4`：主链已完成，`Stage 4 cache` 可作为 `Stage 5` 训练与推理输入。
 - `Stage 5`：训练结论已经收口。
-  - `Open6DOR-only`：当前作为 Open6DOR 单域最优 head。
+  - `Open6DOR-only`：`Round 1 formal` 已完成，是当前最新正式训练结果。
+    - `best_val_loss = 0.201873`
+    - `final_test_metrics.mean_cosine = 0.546283`
+    - `unseen eval mean_cosine = 0.50615`
+    - `unseen eval mean_angle_deg = 50.4271`
   - `SpatialBench-only`：当前作为 SpatialBench 单域最优 head。
   - `Combined / Balanced / Filtered / Curriculum`：当前阶段性判负。
 - `Stage 6/7/8`：本地代码已经完成，且关键入口通过 `py_compile` 静态检查；服务器侧 smoke/eval/ablation 也已经跑完。
 - 当前主判断已经明确：
-  - `Open6DOR`：可以进入下一轮正式训练，先走“增量补 Stage 4 cache -> Open6DOR-only 正式训练 -> 未见样本评测 -> 回接 20-case smoke”主线。
+  - `Open6DOR`：正式训练、未见样本评测、20-case 回接 smoke 都已完成；下一步应转向 `mode-aware` 接回诊断，而不是继续把它当成全 mode 统一最优头。
   - `SpatialBench`：当前不进入全数据正式训练，继续作为“适用子题 + agent routing / prompt / fallback”验证基准。
 
 ## 当前主线代码状态快照
@@ -138,21 +142,69 @@
     - `sofar/output/agent_eval_smoke/spatialbench/...`
     - `sofar/output/agent_eval_smoke/open6dor/...`
 
+### 2026-04-24：Open6DOR formal Round 1 已完成
+- 增量 cache 扩容已完成：
+  - `Stage 3` 新增补跑 `100` 条 pending
+  - `Stage 4` 已对新增与历史 pending 做增量补齐
+- `Stage 5 dry-run` 已跑通：
+  - `dataset_size = 16`
+  - `loss = 1.571849`
+- `Open6DOR formal Round 1` 训练完成：
+  - `train_size = 320`
+  - `val_size = 50`
+  - `test_size = 29`
+  - `best_val_loss = 0.201873`
+  - `final_test_metrics.mean_cosine = 0.546283`
+- 未见样本评测完成：
+  - `dataset_size = 30`
+  - `weighted_loss = 0.34554`
+  - `mean_cosine = 0.50615`
+  - `mean_angle_deg = 50.4271`
+  - `median_angle_deg = 30.8102`
+- 中间判断：
+  - 相比早期小样本 `Open6DOR-only`，这轮 head 本身明显更强。
+  - 训练与未见样本结果都足够支持“继续接回验证”，不是伪提升。
+
+### 2026-04-24：Open6DOR 新 checkpoint 回接 smoke 已完成
+- 本轮回接文件：
+  - `sofar/output/open6dor_perception_summary_20260424_170143.json`
+  - `sofar/output/stage5_open6dor_pipeline_records_20260424_170143.json`
+- 工程稳定性结论：
+  - `20/20 success`
+  - `0 error`
+  - `avg_success_sec = 16.35`
+  - `agent_debug/open6dor/20260424_170143/` 已完整生成
+- 与上一版 `20260422_212450` 对比后的 mode 结论：
+  - `plug_right`：
+    - `oldApplied 0 -> newApplied 2`
+    - 有 2 条 USB-lighter case 从 reject 变成 accepted
+  - `lying_flat`：
+    - `oldApplied 0 -> newApplied 4`
+    - binder 系列 case 明显改善
+  - `upright`：
+    - `oldApplied 6 -> newApplied 0`
+    - 这批 20-case 里出现了明确退化
+  - `clip_sideways`：
+    - 继续维持 `shadow only`
+- 当前最准确的结论：
+  - 新 checkpoint 不是“全模式统一最优接回版本”
+  - 它更像是一个对 `lying_flat` 和部分 `plug_right` 更强、但对 `upright` 更弱的 mode-specific head
+  - 因此下一步优先做 `mode-aware checkpoint / threshold / routing`，而不是直接继续追加全局训练轮次
+
 ## 当前风险判断
 - `SpatialBench` 上大量样本被 skip 不等于 agent 失败，关键在于 skip 理由是否与题型语义一致。
 - `SpatialBench` 的正式训练风险仍然很高，因为题型异质性太强；当前更合理的做法是继续保留“适用子题验证”而不是推进全数据训练。
 - `Open6DOR` 上 direct Stage 5 不是对所有 orientation mode 都有效，所以 verify / fallback / shadow 是必要设计，不是附加复杂度。
-- `Open6DOR` 当前已经满足“进入下一轮正式训练”的工程条件，但还缺少更严格的 ground-truth orientation 评测指标，后续需要补上。
+- `Open6DOR` 新 checkpoint 已证明 head 更强，但接回收益是 mode-specific；如果不做 mode-aware 处理，容易把 `upright` 的退化掩盖掉。
+- `Open6DOR` 还缺少更严格的 ground-truth orientation 评测指标，后续需要补上。
 
 ## 当前下一步
-- 当前最优先：开始 `Open6DOR` 下一轮正式训练。
+- 当前最优先：做 `Open6DOR mode-level` 接回分析和策略修正。
 - 具体顺序已经收口为：
-  1. 先用 `100 + speed-profile off` 增量补 `Open6DOR Stage 3/4 cache`
-  2. 跑一次 `Stage 5 dry-run`
-  3. 跑 `Open6DOR-only` 正式训练 Round 1
-  4. 跑未见样本评测
-  5. 用新 checkpoint 做一次 `Open6DOR 20-case` 回接 smoke
+  1. 用当前 `Round 1 formal checkpoint` 做更大一点的 `Open6DOR agent eval`
+  2. 按 `upright / plug_right / lying_flat / others` 做分桶
+  3. 决定是走 `mode-specific checkpoint` 还是先修 `upright verify / head`
 - 当前不再优先推进：
   - 新的 mixed training 变体
   - `SpatialBench` 全数据正式训练
-  - 在没有 GT orientation 指标的前提下继续扩大 `Stage 8` 数量并直接宣称性能提升
+  - 在没有 GT orientation 指标与 mode 分桶结论前继续扩大 `Stage 8` 数量并直接宣称性能提升
