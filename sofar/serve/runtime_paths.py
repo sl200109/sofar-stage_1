@@ -139,5 +139,9 @@ def open6dor_dataset_dir() -> Path:
     return datasets_dir() / "open6dor_v2"
 
 
+def open6dor_task_refine_6dof_dir() -> Path:
+    return open6dor_dataset_dir() / "open6dor_v2" / "task_refine_6dof"
+
+
 def spatialbench_dataset_dir() -> Path:
     return datasets_dir() / "6dof_spatialbench"

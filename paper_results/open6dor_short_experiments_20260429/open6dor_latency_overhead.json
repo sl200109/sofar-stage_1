@@ -1,0 +1,22 @@
+{
+  "total_sec": {
+    "mean": 17.0,
+    "median": 16.76,
+    "max": 19.26
+  },
+  "qwen_joint_sec": {
+    "mean": 16.73,
+    "median": 16.46,
+    "max": 18.86
+  },
+  "pcd_sec": {
+    "mean": 0.14,
+    "median": 0.12,
+    "max": 0.35
+  },
+  "stage5_head_sec": {
+    "mean": 0.0,
+    "median": 0.0,
+    "max": 0.0
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "source_manifest": "D:\\桌面\\sofar实验同步\\sofar\\output\\stage5_manifest_open6dor_smoke.jsonl",
+  "sampling_seed": 42,
+  "target_total": 400,
+  "available_total": 407,
+  "selected_total": 400,
+  "selected_family_distribution": {
+    "cap_clip_sideways": 93,
+    "flat_upside_down_lying_flat": 135,
+    "other": 38,
+    "plug_right": 6,
+    "upright_vertical": 128
+  },
+  "selected_orientation_mode_distribution": {
+    "cap_left_bottom_right": 5,
+    "cap_right_bottom_left": 7,
+    "clip_sideways": 3,
+    "handle_left": 14,
+    "handle_right": 63,
+    "handle_right_jaw_left": 1,
+    "lying_flat": 44,
+    "lying_sideways": 32,
+    "upside_down": 59,
+    "ballpoint_right": 13,
+    "blade_right": 13,
+    "blades_right": 8,
+    "bulb_right_handle_left": 1,
+    "card_forth_textual": 2,
+    "multimeter_forth": 1,
+    "plug_right": 6,
+    "upright": 128
+  },
+  "selected_split_distribution": {
+    "train": 321,
+    "val": 49,
+    "test": 30
+  },
+  "selected_sample_ids": 400
+}

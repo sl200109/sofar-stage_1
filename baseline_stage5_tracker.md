@@ -551,3 +551,27 @@
   - 三专家 task_family smoke 已完成闭环
   - `lying_flat` 的接回逻辑已和 manifest semantic label 对齐
   - `upright` 与 `plug` 行为保持不变
+
+## 21. 2026-04-29 论文级短耗时实验准备完成
+- 本地已完成：
+  - 40-case before/after verifier ablation
+  - latency / overhead 表
+  - cap / clip / shadow-only 分析
+  - 400-case mode-balanced subset manifest
+  - 400-case final method command 文本
+- 产物目录：
+  - `paper_results/open6dor_short_experiments_20260429/`
+- 当前判断：
+  - 40-case smoke 已闭环
+  - 下一步进入 400-case mode-balanced formal evaluation
+  - 当前不继续训练、不继续改 verifier、不跑全量 4389、不先跑完整 ablation
+
+## 22. 2026-04-29 400-case subset source corrected to server-side from4389
+- 旧的 407-source local Stage5-ready manifest 不再作为 formal 400-case 抽样源。
+- 新增 server-side 采样 helper 与脚本，正式抽样改为：
+  - 枚举 `/data/coding/SoFar/datasets/open6dor_v2/open6dor_v2/task_refine_6dof/`
+  - 从全量 task tree 生成 `open6dor_eval_subset_400_from4389_seed42.*`
+- 当前状态：
+  - 只完成脚本与交接更新
+  - 未启动 400-case evaluation
+  - 仍然不训练、不改 verifier

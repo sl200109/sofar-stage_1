@@ -1,0 +1,9 @@
+{
+  "before": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_152132.json",
+  "after": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_154727.json",
+  "dataset_root": "/data/coding/SoFar/datasets/open6dor_v2/open6dor_v2/task_refine_6dof",
+  "output_dir": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\paper_results\\open6dor_short_experiments_20260429",
+  "seed": 42,
+  "subset_size": 400,
+  "subset_source_policy": "server-side from4389 task tree"
+}

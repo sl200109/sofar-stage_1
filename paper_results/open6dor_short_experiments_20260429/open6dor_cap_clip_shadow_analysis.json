@@ -1,0 +1,43 @@
+{
+  "rows": [
+    {
+      "mode": "cap_left_bottom_right",
+      "count": 5,
+      "selected_execution_mode_distribution": {
+        "stage5_shadow_only": 5
+      },
+      "shadow_used_count": 5,
+      "shadow_accepted_count": 5,
+      "fallback_count": 5,
+      "stage5_applied_count": 0
+    },
+    {
+      "mode": "cap_right_bottom_left",
+      "count": 4,
+      "selected_execution_mode_distribution": {
+        "stage5_shadow_only": 4
+      },
+      "shadow_used_count": 4,
+      "shadow_accepted_count": 4,
+      "fallback_count": 4,
+      "stage5_applied_count": 0
+    },
+    {
+      "mode": "clip_sideways",
+      "count": 2,
+      "selected_execution_mode_distribution": {
+        "stage5_shadow_only": 2
+      },
+      "shadow_used_count": 2,
+      "shadow_accepted_count": 2,
+      "fallback_count": 2,
+      "stage5_applied_count": 0
+    }
+  ],
+  "summary": {
+    "selected_total": 11,
+    "shadow_only_count": 11,
+    "fallback_count": 11,
+    "accepted_count": 11
+  }
+}

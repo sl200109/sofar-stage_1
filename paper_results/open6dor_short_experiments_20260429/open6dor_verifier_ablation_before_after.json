@@ -1,0 +1,79 @@
+{
+  "before": {
+    "success_count": 40,
+    "error_count": 0,
+    "used_stage5_count": 14,
+    "fallback_count": 26,
+    "rejected_count": 15,
+    "upright_direct_count": 8,
+    "plug_right_conditional_count": 6,
+    "lying_flat_accepted_count": 0,
+    "lying_flat_fallback_count": 15,
+    "old_rule_pass": 25,
+    "new_rule_pass": 25,
+    "verifier_rule_version_distribution": {
+      "rule_v2_legacy": 25,
+      "none": 15
+    },
+    "decision_distribution": {
+      "use_stage5_conditional_verify": 6,
+      "use_stage5_direct": 8,
+      "reject_stage5_keep_parser_orientation": 15,
+      "shadow_stage5_for_debug": 11
+    },
+    "selected_execution_mode_distribution": {
+      "stage5_conditional_verified": 6,
+      "stage5_direct_verified": 8,
+      "fallback_reasoning": 15,
+      "stage5_shadow_only": 11
+    },
+    "mode_distribution": {
+      "plug_right": 6,
+      "upright": 8,
+      "lying_flat": 15,
+      "clip_sideways": 2,
+      "cap_left_bottom_right": 5,
+      "cap_right_bottom_left": 4
+    }
+  },
+  "after": {
+    "success_count": 40,
+    "error_count": 0,
+    "used_stage5_count": 29,
+    "fallback_count": 11,
+    "rejected_count": 0,
+    "upright_direct_count": 8,
+    "plug_right_conditional_count": 6,
+    "lying_flat_accepted_count": 15,
+    "lying_flat_fallback_count": 0,
+    "old_rule_pass": 25,
+    "new_rule_pass": 40,
+    "verifier_rule_version_distribution": {
+      "rule_v2_legacy": 25,
+      "rule_v3_semantic_axis": 15
+    },
+    "decision_distribution": {
+      "use_stage5_conditional_verify": 21,
+      "use_stage5_direct": 8,
+      "shadow_stage5_for_debug": 11
+    },
+    "selected_execution_mode_distribution": {
+      "stage5_conditional_verified": 21,
+      "stage5_direct_verified": 8,
+      "stage5_shadow_only": 11
+    },
+    "mode_distribution": {
+      "plug_right": 6,
+      "upright": 8,
+      "lying_flat": 15,
+      "clip_sideways": 2,
+      "cap_left_bottom_right": 5,
+      "cap_right_bottom_left": 4
+    }
+  },
+  "notes": {
+    "before_source": "D:\\桌面\\sofar实验同步\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_152132.json",
+    "after_source": "D:\\桌面\\sofar实验同步\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_154727.json",
+    "verifier_method": "legacy vs semantic-axis (recomputed from records)"
+  }
+}

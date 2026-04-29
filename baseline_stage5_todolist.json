@@ -357,6 +357,48 @@
                       "status":  "done",
                       "title":  "执行 Open6DOR mode-aware 后续验证",
                       "notes":  "已完成本地 verifier 修正后的服务器复跑；40-case smoke success_count=40,error_count=0，upright 8/8 direct verified，plug_right 6/6 conditional verified，lying_flat 15/15 accepted。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_short_experiments_analysis",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "整理 40-case before/after verifier ablation",
+                      "notes":  "已输出 before/after 对比表，包含 success/error/used_stage5/fallback/rejected/upright direct/plug_right conditional/lying_flat accepted fallback/old-new rule pass/verifier version distribution。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_latency_overhead_analysis",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "生成 Open6DOR latency / overhead 表",
+                      "notes":  "已输出 total_sec / qwen_joint_sec / pcd_sec / stage5_head_sec 的 mean/median/max，并保留 Stage5/agent overhead 远小于 Qwen joint reasoning 的结论。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_cap_clip_shadow_analysis",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "生成 cap / clip / shadow-only 分析",
+                      "notes":  "已统计 cap_left_bottom_right、cap_right_bottom_left、clip_sideways 的数量及 selected_execution_mode / shadow / fallback 分布，并保持保守策略说明。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_400_case_subset_manifest",
+                      "owner":  "local",
+                      "status":  "in_progress",
+                      "title":  "生成 400-case mode-balanced evaluation subset",
+                      "notes":  "旧的 407-source local subset 已降级为历史记录；正式 400-case 现在改由 server-side from4389 task tree sampler 生成。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_400_case_final_method_command",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "准备 400-case final method server command",
+                      "notes":  "已写入 open6dor_400_final_method_command.txt，使用当前 three experts + task_family routing + semantic-axis verifier。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_400_case_formal_eval",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 Open6DOR 400-case mode-balanced formal evaluation",
+                      "notes":  "当前只做短耗时准备，不启动全量 4389，也不做完整 ablation；待确认后再跑最终 400-case method。"
                   }
               ]
 }
