@@ -1,215 +1,348 @@
-{
-  "updated_at": "2026-04-24T18:30:00",
-  "tasks": [
-    {
-      "id": "stage5_single_domain_open6dor_training",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 Open6DOR-only Stage 5 训练与未见样本评测",
-      "notes": "best_val_loss=0.376927, test mean_cosine=0.289814, test mean_angle_deg=67.6826"
-    },
-    {
-      "id": "stage5_single_domain_spatialbench_training",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 SpatialBench-only Stage 5 训练与未见样本评测",
-      "notes": "best_val_loss=0.223075, test mean_cosine=0.554985, test mean_angle_deg=49.1498"
-    },
-    {
-      "id": "stage5_combined_training_variants",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 Combined / Balanced / Filtered / Curriculum 训练实验",
-      "notes": "统一共享 head 的跨域训练当前阶段性判负，作为负结果链保留"
-    },
-    {
-      "id": "stage5_pipeline_integration_open6dor",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 Open6DOR 单域最优 checkpoint 回接与 20-case smoke",
-      "notes": "Open6DOR pipeline 与 Stage 5 head 已稳定接通"
-    },
-    {
-      "id": "stage5_pipeline_integration_spatialbench",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 SpatialBench 单域最优 checkpoint 回接与 20-case smoke",
-      "notes": "链路跑通，但 direct injection 没有带来统一 orientation 提升，后续主线已转向 task-aware gating 与 agent routing"
-    },
-    {
-      "id": "stage5_effect_test_open6dor",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Open6DOR 单域回接后的效果诊断",
-      "notes": "已确认 Open6DOR 更适合作为单目标操控朝向主线，并转向 mode-aware verify / fallback / shadow"
-    },
-    {
-      "id": "stage5_effect_diagnose_spatialbench",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 SpatialBench 单域回接后的效果诊断",
-      "notes": "已确认 SpatialBench 题型异质性强，不适合作为统一 Stage 5 正式训练主线"
-    },
-    {
-      "id": "stage5_spatialbench_gating_design",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 SpatialBench 题型筛选、Stage 5 gating 与更强 prompt",
-      "notes": "已新增 spatialbench_stage5.py，并在 eval_spatialbench.py / qwen_inference.py / system_prompts.py 中接入"
-    },
-    {
-      "id": "stage5_spatialbench_subset_smoke",
-      "owner": "server",
-      "status": "done",
-      "title": "完成 SpatialBench gating + prompt 的 20-case smoke",
-      "notes": "已确认 stage5 skipped category 日志与 gating 生效"
-    },
-    {
-      "id": "stage5_normalize_open6dor_orientation_keys",
-      "owner": "local",
-      "status": "done",
-      "title": "统一 Open6DOR stage5_target_orientation 键名",
-      "notes": "已在 stage5_inference.py / open6dor_perception.py 中补齐 attr 归一化与记录"
-    },
-    {
-      "id": "stage5_open6dor_mode_gating",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Open6DOR Stage 5 模式级 gating",
-      "notes": "默认只对 upright / upright_lens_forth 直接放行，plug_right / lying_flat 交给 conditional verify 主线"
-    },
-    {
-      "id": "report_agent_reframe",
-      "owner": "local",
-      "status": "done",
-      "title": "完成实验设计报告的 agent 化路线重构",
-      "notes": "总叙事已改为 PSCR backbone + lightweight agent layer，并明确 Open6DOR 与 SpatialBench 走不同主线"
-    },
-    {
-      "id": "stage6_reverification_agent_rules",
-      "owner": "local",
-      "status": "done",
-      "title": "实现 Re-Verification Agent 的规则版",
-      "notes": "已补齐 semantic_orientation_agent.py 的统一 schema、SpatialBench evidence verify、Open6DOR mode-aware verify 与 reject/shadow 路线"
-    },
-    {
-      "id": "stage7_module_selection_agent_heuristic",
-      "owner": "local",
-      "status": "done",
-      "title": "实现 Module-Selection Agent 的 heuristic 版本",
-      "notes": "SpatialBench 已支持 off/dataset/auto 三种控制模式，Open6DOR 已接入 direct/conditional/shadow/baseline 四类执行路径"
-    },
-    {
-      "id": "stage7_auto_mode_selection_agent",
-      "owner": "local",
-      "status": "done",
-      "title": "实现 AutoModeSelection Agent 的三级控制入口",
-      "notes": "已新增 decide_auto_agent_route(...)，并在 SpatialBench / Open6DOR 两条链路中写入 selected_dataset_agent / selected_execution_mode / route_reason"
-    },
-    {
-      "id": "stage6_spatialbench_rule_v2",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 SpatialBench rule_v2 的题型细分与 prompt 分流",
-      "notes": "已新增 axis_direction / reference_alignment / camera_alignment 三类适用子题，并修正 parser_object_count=2 的误杀"
-    },
-    {
-      "id": "stage6_spatialbench_agent_smoke",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 SpatialBench 规则版 agent 20-case smoke",
-      "notes": "已确认 decision / verify / selected_execution_mode / dataset_agent 字段稳定写入 progress 与 agent_debug"
-    },
-    {
-      "id": "stage6_spatialbench_applicable_pilot_smoke",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 SpatialBench stage5_applicable14 定向 smoke",
-      "notes": "14 条 targeted pilot 已完成，stage5_used=11, verification accepted=11, total_accuracy=0.4286"
-    },
-    {
-      "id": "stage6_open6dor_agent_schema_smoke",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 Open6DOR 规则版 agent 20-case smoke",
-      "notes": "已确认 direct / conditional / baseline / shadow 执行路径、verify 结果与 agent_debug 产物稳定"
-    },
-    {
-      "id": "stage8_agent_eval_runner",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Stage 8 独立评测 runner",
-      "notes": "已新增 sofar/analysis/stage8_agent_eval.py，并支持 --reuse-source 复用已有 pipeline 结果"
-    },
-    {
-      "id": "stage8_agent_ablation_runner",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Stage 8 消融 runner",
-      "notes": "已新增 sofar/analysis/stage8_agent_ablation.py，可顺序调用 stage8_agent_eval.py 并输出 ablation_summary.json / ablation_table.csv"
-    },
-    {
-      "id": "stage8_server_smoke",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 Stage 8 agent eval / ablation 小规模 smoke",
-      "notes": "SpatialBench 与 Open6DOR 的 baseline / direct_stage5 / agent 三组结果均已落地；注意根目录 summary 会被最后一次运行覆盖，应以子目录结果为准"
-    },
-    {
-      "id": "documentation_code_map_sync",
-      "owner": "local",
-      "status": "done",
-      "title": "完成主线代码地图、交接总表与记录文档同步",
-      "notes": "已维护 当前代码地图与交接总表.md、baseline_stage5_tracker.md、baseline_stage5_todolist.json、交接操作.txt"
-    },
-    {
-      "id": "stage5_open6dor_formal_cache_expansion",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 Open6DOR 正式训练前的增量 Stage 3/4 cache 扩容",
-      "notes": "已完成 100 条 Stage 3 增量补跑与对应 Stage 4 补齐；日志已确认 skip 既有 cache，少量失败来自坏图或缺失 Stage 3 cache"
-    },
-    {
-      "id": "stage5_open6dor_formal_training_round1",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 Open6DOR-only 正式训练 Round 1",
-      "notes": "已完成，output=stage5_open6dor_train_round1_formal；best_val_loss=0.201873，final_test_metrics.mean_cosine=0.546283"
-    },
-    {
-      "id": "stage5_open6dor_formal_unseen_eval_round1",
-      "owner": "server",
-      "status": "done",
-      "title": "执行 Open6DOR 正式训练 Round 1 的未见样本评测",
-      "notes": "已完成；dataset_size=30，weighted_loss=0.34554，mean_cosine=0.50615，mean_angle_deg=50.4271"
-    },
-    {
-      "id": "stage5_open6dor_round1_pipeline_reintegration",
-      "owner": "server",
-      "status": "done",
-      "title": "用新 Open6DOR checkpoint 做 20-case 回接 smoke",
-      "notes": "已完成；20/20 success, 0 error, avg_success_sec=16.35。mode 结论：plug_right 0->2, lying_flat 0->4, upright 6->0, clip_sideways 维持 shadow"
-    },
-    {
-      "id": "stage8_open6dor_metric_refine",
-      "owner": "local",
-      "status": "todo",
-      "title": "补 Open6DOR Stage 8 的真实 orientation 指标",
-      "notes": "当前 stage8_agent_eval.py 对 Open6DOR 的 correct 仍按 status==success 统计，后续需要替换为更严格的 orientation correctness 指标"
-    },
-    {
-      "id": "stage5_open6dor_mode_bucket_compare",
-      "owner": "local",
-      "status": "done",
-      "title": "完成 Open6DOR 新旧 checkpoint 的 mode-level 对比",
-      "notes": "已确认新 checkpoint 对 lying_flat 与部分 plug_right 提升明显，但在当前 20-case slice 上 upright 明显退化"
-    },
-    {
-      "id": "stage5_open6dor_modeaware_followup",
-      "owner": "server",
-      "status": "todo",
-      "title": "执行 Open6DOR mode-aware 后续验证",
-      "notes": "下一步优先做更大样本的 agent eval 或 targeted upright 检查，用于决定是走 mode-specific checkpoint 还是修 upright 接回策略"
-    }
-  ]
+﻿{
+    "updated_at":  "2026-04-29T12:00:00",
+    "tasks":  [
+                  {
+                      "id":  "stage5_single_domain_open6dor_training",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 Open6DOR-only Stage 5 训练与未见样本评测",
+                      "notes":  "best_val_loss=0.376927, test mean_cosine=0.289814, test mean_angle_deg=67.6826"
+                  },
+                  {
+                      "id":  "stage5_single_domain_spatialbench_training",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench-only Stage 5 训练与未见样本评测",
+                      "notes":  "best_val_loss=0.223075, test mean_cosine=0.554985, test mean_angle_deg=49.1498"
+                  },
+                  {
+                      "id":  "stage5_combined_training_variants",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 Combined / Balanced / Filtered / Curriculum 训练实验",
+                      "notes":  "统一共享 head 的跨域训练当前阶段性判负，作为负结果链保留"
+                  },
+                  {
+                      "id":  "stage5_pipeline_integration_open6dor",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 Open6DOR 单域最优 checkpoint 回接与 20-case smoke",
+                      "notes":  "Open6DOR pipeline 与 Stage 5 head 已稳定接通"
+                  },
+                  {
+                      "id":  "stage5_pipeline_integration_spatialbench",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench 单域最优 checkpoint 回接与 20-case smoke",
+                      "notes":  "链路跑通，但 direct injection 没有带来统一 orientation 提升，后续主线已转向 task-aware gating 与 agent routing"
+                  },
+                  {
+                      "id":  "stage5_effect_test_open6dor",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 Open6DOR 单域回接后的效果诊断",
+                      "notes":  "已确认 Open6DOR 更适合作为单目标操控朝向主线，并转向 mode-aware verify / fallback / shadow"
+                  },
+                  {
+                      "id":  "stage5_effect_diagnose_spatialbench",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench 单域回接后的效果诊断",
+                      "notes":  "已确认 SpatialBench 题型异质性强，不适合作为统一 Stage 5 正式训练主线"
+                  },
+                  {
+                      "id":  "stage5_spatialbench_gating_design",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench 题型筛选、Stage 5 gating 与更强 prompt",
+                      "notes":  "已新增 spatialbench_stage5.py，并在 eval_spatialbench.py / qwen_inference.py / system_prompts.py 中接入"
+                  },
+                  {
+                      "id":  "stage5_spatialbench_subset_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench gating + prompt 的 20-case smoke",
+                      "notes":  "已确认 stage5 skipped category 日志与 gating 生效"
+                  },
+                  {
+                      "id":  "stage5_normalize_open6dor_orientation_keys",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "统一 Open6DOR stage5_target_orientation 键名",
+                      "notes":  "已在 stage5_inference.py / open6dor_perception.py 中补齐 attr 归一化与记录"
+                  },
+                  {
+                      "id":  "stage5_open6dor_mode_gating",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 Open6DOR Stage 5 模式级 gating",
+                      "notes":  "默认只对 upright / upright_lens_forth 直接放行，plug_right / lying_flat 交给 conditional verify 主线"
+                  },
+                  {
+                      "id":  "report_agent_reframe",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成实验设计报告的 agent 化路线重构",
+                      "notes":  "总叙事已改为 PSCR backbone + lightweight agent layer，并明确 Open6DOR 与 SpatialBench 走不同主线"
+                  },
+                  {
+                      "id":  "stage6_reverification_agent_rules",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Re-Verification Agent 的规则版",
+                      "notes":  "已补齐 semantic_orientation_agent.py 的统一 schema、SpatialBench evidence verify、Open6DOR mode-aware verify 与 reject/shadow 路线"
+                  },
+                  {
+                      "id":  "stage7_module_selection_agent_heuristic",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Module-Selection Agent 的 heuristic 版本",
+                      "notes":  "SpatialBench 已支持 off/dataset/auto 三种控制模式，Open6DOR 已接入 direct/conditional/shadow/baseline 四类执行路径"
+                  },
+                  {
+                      "id":  "stage7_auto_mode_selection_agent",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 AutoModeSelection Agent 的三级控制入口",
+                      "notes":  "已新增 decide_auto_agent_route(...)，并在 SpatialBench / Open6DOR 两条链路中写入 selected_dataset_agent / selected_execution_mode / route_reason"
+                  },
+                  {
+                      "id":  "stage6_spatialbench_rule_v2",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 SpatialBench rule_v2 的题型细分与 prompt 分流",
+                      "notes":  "已新增 axis_direction / reference_alignment / camera_alignment 三类适用子题，并修正 parser_object_count=2 的误杀"
+                  },
+                  {
+                      "id":  "stage6_spatialbench_agent_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 SpatialBench 规则版 agent 20-case smoke",
+                      "notes":  "已确认 decision / verify / selected_execution_mode / dataset_agent 字段稳定写入 progress 与 agent_debug"
+                  },
+                  {
+                      "id":  "stage6_spatialbench_applicable_pilot_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 SpatialBench stage5_applicable14 定向 smoke",
+                      "notes":  "14 条 targeted pilot 已完成，stage5_used=11, verification accepted=11, total_accuracy=0.4286"
+                  },
+                  {
+                      "id":  "stage6_open6dor_agent_schema_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Open6DOR 规则版 agent 20-case smoke",
+                      "notes":  "已确认 direct / conditional / baseline / shadow 执行路径、verify 结果与 agent_debug 产物稳定"
+                  },
+                  {
+                      "id":  "stage8_agent_eval_runner",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 Stage 8 独立评测 runner",
+                      "notes":  "已新增 sofar/analysis/stage8_agent_eval.py，并支持 --reuse-source 复用已有 pipeline 结果"
+                  },
+                  {
+                      "id":  "stage8_agent_ablation_runner",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 Stage 8 消融 runner",
+                      "notes":  "已新增 sofar/analysis/stage8_agent_ablation.py，可顺序调用 stage8_agent_eval.py 并输出 ablation_summary.json / ablation_table.csv"
+                  },
+                  {
+                      "id":  "stage8_server_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Stage 8 agent eval / ablation 小规模 smoke",
+                      "notes":  "SpatialBench 与 Open6DOR 的 baseline / direct_stage5 / agent 三组结果均已落地；注意根目录 summary 会被最后一次运行覆盖，应以子目录结果为准"
+                  },
+                  {
+                      "id":  "documentation_code_map_sync",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成主线代码地图、交接总表与记录文档同步",
+                      "notes":  "已维护 当前代码地图与交接总表.md、baseline_stage5_tracker.md、baseline_stage5_todolist.json、交接操作.txt"
+                  },
+                  {
+                      "id":  "stage5_open6dor_formal_cache_expansion",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Open6DOR 正式训练前的增量 Stage 3/4 cache 扩容",
+                      "notes":  "已完成 100 条 Stage 3 增量补跑与对应 Stage 4 补齐；日志已确认 skip 既有 cache，少量失败来自坏图或缺失 Stage 3 cache"
+                  },
+                  {
+                      "id":  "stage5_open6dor_formal_training_round1",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Open6DOR-only 正式训练 Round 1",
+                      "notes":  "已完成，output=stage5_open6dor_train_round1_formal；best_val_loss=0.201873，final_test_metrics.mean_cosine=0.546283"
+                  },
+                  {
+                      "id":  "stage5_open6dor_formal_unseen_eval_round1",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Open6DOR 正式训练 Round 1 的未见样本评测",
+                      "notes":  "已完成；dataset_size=30，weighted_loss=0.34554，mean_cosine=0.50615，mean_angle_deg=50.4271"
+                  },
+                  {
+                      "id":  "stage5_open6dor_round1_pipeline_reintegration",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "用新 Open6DOR checkpoint 做 20-case 回接 smoke",
+                      "notes":  "已完成；20/20 success, 0 error, avg_success_sec=16.35。mode 结论：plug_right 0-\u003e2, lying_flat 0-\u003e4, upright 6-\u003e0, clip_sideways 维持 shadow"
+                  },
+                  {
+                      "id":  "stage8_open6dor_metric_refine",
+                      "owner":  "local",
+                      "status":  "todo",
+                      "title":  "补 Open6DOR Stage 8 的真实 orientation 指标",
+                      "notes":  "当前 stage8_agent_eval.py 对 Open6DOR 的 correct 仍按 status==success 统计，后续需要替换为更严格的 orientation correctness 指标"
+                  },
+                  {
+                      "id":  "stage5_open6dor_mode_bucket_compare",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "完成 Open6DOR 新旧 checkpoint 的 mode-level 对比",
+                      "notes":  "已确认新 checkpoint 对 lying_flat 与部分 plug_right 提升明显，但在当前 20-case slice 上 upright 明显退化"
+                  },
+                  {
+                      "id":  "stage5_open6dor_modeaware_followup",
+                      "owner":  "server",
+                      "status":  "in_progress",
+                      "title":  "执行 Open6DOR mode-aware 后续验证",
+                      "notes":  "routing smoke 已证明三桶路由记录写入正确；本地已确认旧 manifest 中 upright 标签存在负 z 污染。下一步先刷新 manifest，再复跑 upright diagnostics / retrain。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_freeze_upright_expert_ckpt",
+                      "owner":  "local",
+                      "status":  "in_progress",
+                      "title":  "冻结 stage5_pilot_best.pth 为 upright expert",
+                      "notes":  "已停止把该 ckpt 当作全模式共享头；但当前更准确的结论是旧 upright 训练标签已被 geometry_priors 污染，需先刷新 manifest 再决定是否用新标签重训 upright expert。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_task_family_expert_split",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "规划 Open6DOR 的 3 个任务族专家",
+                      "notes":  "已收口为三桶：upright/vertical；flat/upside_down/lying_flat；plug/cap/sideways。并已新增 stage5_split_open6dor_manifest.py 供后续训练直接切 manifest。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_agent_ckpt_routing",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "给 agent 增加 ckpt 路由信号",
+                      "notes":  "服务器 smoke 20260428_222616 已确认 task_family 路由入口、checkpoint_family/source/route_reason/signals 写入正确；strict routing 对缺失 flat/plug ckpt 的跳过行为也符合预期。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_family_expert_holdout_eval",
+                      "owner":  "local",
+                      "status":  "todo",
+                      "title":  "按任务族做 held-out 验证",
+                      "notes":  "每个专家只在自己的 bucket 上评估，再检查跨 bucket 退化；不把单桶提升误写成全模式提升。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_upright_semantic_diagnostics",
+                      "owner":  "local",
+                      "status":  "in_progress",
+                      "title":  "补 Open6DOR upright 的 top/bottom/z 语义诊断",
+                      "notes":  "已在 stage5_inference.py / open6dor_perception.py 新增 orientation_diagnostics；并在 stage5_manifest.py 中把 upright/upside_down 标签源改成语义轴优先。等待服务器刷新 manifest 后复核。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_family_manifest_splitter",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Open6DOR family manifest splitter",
+                      "notes":  "已新增 orientation/stage5_split_open6dor_manifest.py，可把 open6dor manifest 直接拆成 upright/flat/plug 三桶供 stage5_train_pilot.py --manifest-path 复用。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_expert_training_round1",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 flat/upside_down/lying_flat 专家 Round 1 训练",
+                      "notes":  "scratch 已完成；best_val_loss=0.310211，final_test_metrics.mean_cosine=-0.276815。结果偏负，不能直接作为可用专家接回。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_plug_expert_training_round1",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 plug/cap/sideways 专家 Round 1 训练",
+                      "notes":  "scratch 已完成；best_val_loss=0.567769，final_test_metrics.mean_cosine=0.132154。略优于 flat，但仍不足以作为稳定专家。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_refresh_manifests_after_semantic_fix",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "在 upright 语义修复后重建 Stage 5 smoke manifests",
+                      "notes":  "运行 stage5_refresh_manifests.py 生成新的 stage5_manifest_open6dor_smoke.jsonl，再切出 round2 family manifests。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_upright_expert_training_round2",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "基于刷新后的 upright manifest 重训 upright expert",
+                      "notes":  "已完成；train_size=98, val_size=24, test_size=8, best_val_loss=1e-06, final_test_metrics.mean_cosine=0.999998。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_upright_round2_task_family_smoke",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "用新 upright expert 做 task_family smoke",
+                      "notes":  "20/20 success，used_stage5_count=8，accepted 全部来自 upright_vertical，semantic_status 全部为 top_up_consistent。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_plug_label_cleaning",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "为 flat / plug 专家补更干净的标签清洗规则",
+                      "notes":  "已前移到语义轴层；flat / plug 的训练标签不再默认依赖 geometry_priors.part_to_object_vector。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_upright_round2_manifest_refresh",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "刷新 Open6DOR smoke manifest 的 upright 语义标签",
+                      "notes":  "stage5_manifest_open6dor_smoke.jsonl 已重建；upright_vertical 子桶全部写入 orientation_mode.upright_semantic_axis。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_plug_round3_manifest_refresh",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "刷新 flat / plug 语义轴清洗后的 round3 manifest",
+                      "notes":  "已完成；round3 family manifests 中 flat / plug 的 label source 已切到语义轴层，不再依赖 geometry priors。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_plug_strategy_decision",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "基于 round3 manifest 决定 flat / plug 的训练初始化",
+                      "notes":  "已收口为继续 from-scratch；当前不引入 warm-start，避免 upright 的 z-up 偏置污染 flat / plug 任务族。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_label_cleaning_local_smoke",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "建立 flat / plug label cleaning 本地 smoke test",
+                      "notes":  "已新增 tests/test_stage5_open6dor_label_cleaning.py；`python -m unittest tests.test_stage5_open6dor_label_cleaning` 通过。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_expert_training_round2",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 flat/upside_down/lying_flat 专家 Round 2 训练",
+                      "notes":  "使用 round3 manifest，from-scratch；train=121, val=11, test=8。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_plug_expert_training_round2",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 plug/cap/sideways 专家 Round 2 训练",
+                      "notes":  "使用 round3 manifest，from-scratch；train=80, val=10, test=9。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_three_expert_task_family_smoke",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 upright/flat/plug 三专家联合接回 smoke",
+                      "notes":  "使用 task_family routing 同时挂载三类 expert checkpoint，检查各桶 accepted/rejected/fallback 分布。"
+                  }
+              ]
 }

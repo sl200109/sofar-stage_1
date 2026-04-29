@@ -50,12 +50,50 @@ def _normalize_named_axis(vector: Iterable[float], source: str, confidence: floa
     return normalized, source, confidence
 
 
+def _open6dor_semantic_axis(orientation_mode: str) -> Optional[Tuple[List[float], str, float]]:
+    mode = str(orientation_mode or "").strip().lower()
+    # For Open6DOR, certain modes are cleaner when supervised by semantic axes
+    # instead of raw geometry priors. This keeps upright / flat / plug buckets
+    # internally consistent before family-specific training.
+    semantic_axes = {
+        "upright": ([0.0, 0.0, 1.0], "orientation_mode.upright_semantic_axis", 0.95),
+        "upright_lens_forth": ([0.0, 0.0, 1.0], "orientation_mode.upright_lens_forth_semantic_axis", 0.9),
+        "upright_textual": ([0.0, 0.0, 1.0], "orientation_mode.upright_textual_semantic_axis", 0.9),
+        "vertical": ([0.0, 0.0, 1.0], "orientation_mode.vertical_semantic_axis", 0.9),
+        "upside_down": ([0.0, 0.0, -1.0], "orientation_mode.upside_down_semantic_axis", 0.95),
+        "upside_down_textual": ([0.0, 0.0, -1.0], "orientation_mode.upside_down_textual_semantic_axis", 0.9),
+        "lying_flat": ([0.0, 0.0, -1.0], "orientation_mode.lying_flat_semantic_axis", 0.9),
+        "lying_sideways": ([0.0, 1.0, 0.0], "orientation_mode.lying_sideways_semantic_axis", 0.85),
+        "sideways": ([0.0, 1.0, 0.0], "orientation_mode.sideways_semantic_axis", 0.8),
+        "sideways_textual": ([0.0, 1.0, 0.0], "orientation_mode.sideways_textual_semantic_axis", 0.8),
+        "clip_sideways": ([0.0, 1.0, 0.0], "orientation_mode.clip_sideways_semantic_axis", 0.85),
+        "plug_right": ([1.0, 0.0, 0.0], "orientation_mode.plug_right_semantic_axis", 0.9),
+        "plug_left": ([-1.0, 0.0, 0.0], "orientation_mode.plug_left_semantic_axis", 0.85),
+        "handle_right": ([1.0, 0.0, 0.0], "orientation_mode.handle_right_semantic_axis", 0.9),
+        "handle_left": ([-1.0, 0.0, 0.0], "orientation_mode.handle_left_semantic_axis", 0.85),
+        "handle_right_jaw_left": ([1.0, 0.0, 0.0], "orientation_mode.handle_right_jaw_left_semantic_axis", 0.8),
+        "cap_right_bottom_left": ([1.0, 0.0, 0.0], "orientation_mode.cap_right_bottom_left_semantic_axis", 0.85),
+        "cap_left_bottom_right": ([-1.0, 0.0, 0.0], "orientation_mode.cap_left_bottom_right_semantic_axis", 0.85),
+    }
+    payload = semantic_axes.get(mode)
+    if payload is None:
+        return None
+    axis, source, confidence = payload
+    return _normalize_named_axis(axis, source, confidence)
+
+
 def _resolve_pilot_label(
     dataset: str,
     cache_payload: Dict[str, Any],
 ) -> Tuple[List[float], str, float]:
     geometry = cache_payload.get("geometry_priors", {}) or {}
     parser_output = cache_payload.get("parser_output", {}) or {}
+
+    if dataset == "open6dor":
+        orientation_mode = str(parser_output.get("orientation_mode", "") or "").strip().lower()
+        semantic_axis = _open6dor_semantic_axis(orientation_mode)
+        if semantic_axis is not None:
+            return semantic_axis
 
     vector = geometry.get("part_to_object_vector")
     if vector is not None:
@@ -64,7 +102,6 @@ def _resolve_pilot_label(
             return normalized, source, 1.0
 
     if dataset == "open6dor":
-        orientation_mode = str(parser_output.get("orientation_mode", "") or "").strip().lower()
         orientation_templates = {
             "upright": ([0.0, 0.0, 1.0], "orientation_mode.upright", 0.75),
             "upside_down": ([0.0, 0.0, -1.0], "orientation_mode.upside_down", 0.75),

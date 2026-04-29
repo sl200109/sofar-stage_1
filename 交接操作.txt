@@ -1,91 +1,37 @@
-当前版本：2026-04-24
+当前版本：2026-04-29
 
-1. 当前判断
-- 四个 20-case smoke 已经全部完成，不要重复跑：
-  - SpatialBench dataset agent smoke
-  - Open6DOR dataset agent smoke
-  - SpatialBench auto agent smoke
-  - Open6DOR auto agent smoke
-- Stage 8 的八条命令也已经完成，不要重复跑：
-  - SpatialBench baseline / direct_stage5 / agent eval
-  - Open6DOR baseline / direct_stage5 / agent eval
-  - SpatialBench ablation
-  - Open6DOR ablation
-- SpatialBench 当前结论：
-  - 顺序前 20 条主要用于验证 routing 是否合理，不适合作为“开始正式训练”的依据
-  - `stage5_applicable14` targeted pilot 已经证明 rule_v2 在适用子题上是可用的，但当前仍不启动 SpatialBench 全数据正式训练
-- Open6DOR 当前结论：
-  - `formal Round 1` 训练、未见样本评测、20-case 回接 smoke 都已经完成
-  - 当前不是继续补训练主链的时候，而是要判断新 checkpoint 到底适合哪些 mode
-  - 新旧 20-case 对比结论：
-    - `plug_right`: `0 -> 2` 条通过 verify
-    - `lying_flat`: `0 -> 4` 条通过 verify
-    - `upright`: `6 -> 0` 条通过 verify
-    - `clip_sideways`: 继续 `shadow only`
-  - 所以这轮 head 不能直接记成“全 mode 默认最佳接回版本”
+状态：
+- upright / flat / plug 三个 expert 已训练完成
+- 下一步执行三专家一起接回的 task_family smoke
 
-2. 先上传哪些文件夹
-最小上传：
-- `sofar/open6dor`
-- `sofar/serve`
-- `sofar/analysis`
+需要上传的文件夹：
+- 无新增代码上传
 
-按需补传：
-- `sofar/output/stage5_open6dor_train_round1_formal`
-  - 如果服务器上没有这轮正式训练得到的新 checkpoint，再补传这个文件夹
-- `sofar/orientation`
-  - 只有训练脚本和服务器版本不一致时再补传
+文件夹：
+- 无
 
-3. 服务器执行步骤
+文件：
+- 交接操作.txt
 
-Step 1：Open6DOR 100-case mode check
-命令：
-`cd /data/coding/SoFar`
-`python analysis/stage8_agent_eval.py --dataset open6dor --eval-mode agent --agent-mode dataset --limit 100 --output-dir /data/coding/SoFar/output/agent_eval_open6dor_modecheck`
-意义：
-- 现在最重要的问题不是“训练链路通不通”，而是“新 checkpoint 在更大一点的样本上，到底是不是只对某些 mode 更好”
-- 这一步是用 agent eval 直接看 mode 分桶和使用率
-做完后要检查什么：
-- `summary.json` 里是否有 `decision_distribution`
-- 是否能按 `stage5_mode` 看出 `plug_right / upright / lying_flat / others`
-- `agent` 结果是不是继续保持无 crash
+服务器目标路径：
+- /data/coding/SoFar
 
-Step 2：如果要继续聚焦 upright，再做 targeted 20-case
-命令：
-`cd /data/coding/SoFar`
-`python open6dor/open6dor_perception.py --limit 20 --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_train_round1_formal/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative`
-意义：
-- 这一步不是为了再验证“链路通不通”，而是继续积累 `upright` 退化 case，帮助决定后面是调 verify 还是做 mode-specific checkpoint
-做完后要检查什么：
-- `open6dor_perception_summary_*.json`
-- `stage5_open6dor_pipeline_records_*.json`
-- `agent_debug/open6dor/<run_id>/`
+服务器命令：
+- `cd /data/coding/SoFar`
+- `python open6dor/open6dor_perception.py --limit 40 --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-expert-routing task_family --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative`
 
-4. 做完后回传哪些文件夹
-优先回传文件夹：
-- `sofar/output/stage5_open6dor_train_round1_formal`
-- `sofar/output/agent_debug`
-- `sofar/output/agent_eval_open6dor_modecheck`
+预期输出：
+- 新的 `open6dor_perception_*.log`
+- 新的 `open6dor_perception_summary_*.json`
+- 新的 `stage5_open6dor_pipeline_records_*.json`
 
-必要补充文件：
-- 本轮最新 `sofar/output/open6dor_perception_summary_*.json`
-- 本轮最新 `sofar/output/stage5_open6dor_pipeline_records_*.json`
-- 本轮最新 `sofar/output/open6dor_perception_*.log`
+失败时回传：
+- 终端报错全文
+- 最新 `open6dor_perception_*.log`
+- 最新 `open6dor_perception_summary_*.json`
+- 最新 `stage5_open6dor_pipeline_records_*.json`
 
-5. 回传后我会怎么检查
-固定检查项：
-- `plug_right / upright / lying_flat / others` 四个桶里各自的 apply / reject / shadow 比例
-- 新 checkpoint 的提升是不是集中在 `lying_flat / plug_right`
-- `upright` 是不是继续明显退化
-- 是否存在新的系统性退化，例如：
-  - 全量被 reject
-  - 全量 fallback
-  - `target_orientation` 大面积空掉
-  - 某个 mode 大面积崩掉
-
-6. 这轮的判断标准
-- 这轮已经不是“能不能开始训练”的问题了，这一步的通过标准改成：
-  1. 能明确说清楚新 checkpoint 提升的是哪些 mode
-  2. 能明确说清楚退化的是哪些 mode
-  3. 能据此决定下一步走 `mode-specific 接回` 还是优先修 `upright`
-- `SpatialBench` 继续只作为 agent / routing / prompt 设计验证基准，不参与这一步判断。
+需要回传的文件夹/文件：
+- /data/coding/SoFar/output/open6dor_perception_*.log
+- /data/coding/SoFar/output/open6dor_perception_summary_*.json
+- /data/coding/SoFar/output/stage5_open6dor_pipeline_records_*.json

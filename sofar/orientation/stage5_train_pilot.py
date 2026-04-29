@@ -60,6 +60,7 @@ def parse_args():
     parser.add_argument("--balance-datasets", action="store_true")
     parser.add_argument("--exclude-label-source", action="append", default=[])
     parser.add_argument("--min-label-confidence", type=float, default=0.0)
+    parser.add_argument("--manifest-path", type=str, default="")
     parser.add_argument("--init-checkpoint", type=str, default="")
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--seed", type=int, default=42)
@@ -308,6 +309,7 @@ def main():
     max_test_samples = args.max_test_samples if args.max_test_samples > 0 else args.max_val_samples
 
     summaries = build_stage5_smoke_manifests(repo_root=repo_root, output_dir=output_dir)
+    custom_manifest_path = Path(args.manifest_path).resolve() if args.manifest_path else None
     (
         train_manifest,
         val_manifest,
@@ -327,6 +329,30 @@ def main():
         args.exclude_label_source,
         args.min_label_confidence,
     )
+
+    if custom_manifest_path:
+        custom_entries = _load_manifest_entries(custom_manifest_path)
+        custom_entries = _filter_entries(custom_entries, args.exclude_label_source, args.min_label_confidence)
+        train_entries = [e for e in custom_entries if e.get("split") == "train"]
+        val_entries = [e for e in custom_entries if e.get("split") == "val"]
+        test_entries = [e for e in custom_entries if e.get("split") == "test"]
+        if not val_entries and len(train_entries) > 1:
+            val_entries = train_entries[-1:]
+            train_entries = train_entries[:-1]
+        train_entries = train_entries[:args.max_train_samples]
+        val_entries = val_entries[:args.max_val_samples]
+        test_entries = test_entries[:max_test_samples]
+        train_manifest = output_dir / "stage5_train_manifest.jsonl"
+        val_manifest = output_dir / "stage5_val_manifest.jsonl"
+        test_manifest = output_dir / "stage5_test_manifest.jsonl"
+        _write_jsonl(train_manifest, train_entries)
+        _write_jsonl(val_manifest, val_entries)
+        _write_jsonl(test_manifest, test_entries)
+        manifest_stats = {
+            "train": _entry_stats(train_entries),
+            "val": _entry_stats(val_entries),
+            "test": _entry_stats(test_entries),
+        }
 
     train_dataset = _build_dataset(train_manifest, "all", args.num_points, args.max_train_samples)
     val_dataset = _build_dataset(val_manifest, "all", args.num_points, args.max_val_samples)

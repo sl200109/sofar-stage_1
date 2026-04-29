@@ -154,6 +154,80 @@ def _vector_to_orientation_dict(direction_attributes: Iterable[str], direction_v
     return {attr: vector for attr in attrs}
 
 
+def _build_orientation_diagnostics(
+    direction_attributes: Iterable[str],
+    direction_vector: Iterable[float],
+    *,
+    orientation_mode: str = "",
+) -> Dict[str, Any]:
+    attrs = [str(item).strip() for item in direction_attributes if str(item or "").strip()]
+    vec = np.asarray(direction_vector, dtype=np.float32).reshape(-1)
+    while vec.size < 3:
+        vec = np.append(vec, 0.0)
+    x = round(float(vec[0]), 6)
+    y = round(float(vec[1]), 6)
+    z = round(float(vec[2]), 6)
+    dominant_axis = "x"
+    dominant_value = abs(x)
+    if abs(y) > dominant_value:
+        dominant_axis = "y"
+        dominant_value = abs(y)
+    if abs(z) > dominant_value:
+        dominant_axis = "z"
+        dominant_value = abs(z)
+
+    normalized_attrs = {_normalize_name(attr) for attr in attrs}
+    has_top = "top" in normalized_attrs
+    has_bottom = "bottom" in normalized_attrs
+    top_up_score = round(z if has_top else 0.0, 6)
+    bottom_down_score = round(-z if has_bottom else 0.0, 6)
+
+    semantic_status = "unconstrained"
+    semantic_warning = ""
+    if has_top and has_bottom:
+        if z >= 0.55:
+            semantic_status = "top_up_consistent"
+        elif z <= -0.55:
+            semantic_status = "top_bottom_sign_conflict"
+            semantic_warning = "requested_top_and_bottom_but_vector_points_down"
+        else:
+            semantic_status = "top_bottom_axis_ambiguous"
+            semantic_warning = "requested_top_and_bottom_but_z_is_not_decisive"
+    elif has_top:
+        if z >= 0.55:
+            semantic_status = "top_up_consistent"
+        elif z <= -0.55:
+            semantic_status = "top_points_down"
+            semantic_warning = "top_attribute_requests_upward_axis_but_prediction_points_down"
+        else:
+            semantic_status = "top_axis_ambiguous"
+            semantic_warning = "top_attribute_requests_upward_axis_but_prediction_is_sideways"
+    elif has_bottom:
+        if z <= -0.55:
+            semantic_status = "bottom_down_consistent"
+        elif z >= 0.55:
+            semantic_status = "bottom_points_up"
+            semantic_warning = "bottom_attribute_requests_downward_axis_but_prediction_points_up"
+        else:
+            semantic_status = "bottom_axis_ambiguous"
+            semantic_warning = "bottom_attribute_requests_downward_axis_but_prediction_is_sideways"
+    elif abs(z) < 0.35:
+        semantic_status = "axis_sideways"
+        semantic_warning = "vector_is_close_to_horizontal_without_top_bottom_constraint"
+
+    return {
+        "requested_attributes": attrs,
+        "orientation_mode": str(orientation_mode or "").strip(),
+        "vector_components": {"x": x, "y": y, "z": z},
+        "dominant_axis": dominant_axis,
+        "dominant_axis_abs": round(float(dominant_value), 6),
+        "top_up_score": top_up_score,
+        "bottom_down_score": bottom_down_score,
+        "semantic_status": semantic_status,
+        "semantic_warning": semantic_warning,
+    }
+
+
 def _normalize_open6dor_attr_label(value: Any) -> str:
     label = str(value or "").strip().lower().replace("_", " ")
     label = " ".join(label.split())
@@ -220,6 +294,52 @@ def _preferred_open6dor_attrs(orientation_mode: str, template_attrs: List[str]) 
     return _dedupe_preserve_order(preferred or template_attrs)
 
 
+def _canonical_open6dor_attrs_for_mode(orientation_mode: str, attrs: List[str], template_attrs: List[str]) -> List[str]:
+    mode = str(orientation_mode or "").strip().lower().replace(" ", "_")
+    normalized_to_original = {_normalize_name(attr): attr for attr in attrs}
+
+    def pick(*candidates: str) -> List[str]:
+        for candidate in candidates:
+            key = _normalize_name(candidate)
+            if key in normalized_to_original:
+                return [normalized_to_original[key]]
+        return []
+
+    if mode in {"upright", "upright_lens_forth", "upright_textual", "vertical"}:
+        chosen = pick("top")
+        if chosen:
+            return chosen
+    if mode in {"upside_down", "upside_down_textual"}:
+        chosen = pick("top")
+        if chosen:
+            return chosen
+    if mode == "lying_flat":
+        chosen = pick("larger face", "front cover", "screen", "back")
+        if chosen:
+            return chosen
+    if mode.startswith("plug_"):
+        chosen = pick("silver plug end", "plug end", "larger end")
+        if chosen:
+            return chosen
+    if mode.startswith("handle_"):
+        chosen = pick("handle")
+        if chosen:
+            return chosen
+    if mode.startswith("cap_"):
+        chosen = pick("cap")
+        if chosen:
+            return chosen
+    if mode in {"lying_sideways", "clip_sideways", "sideways", "sideways_textual"}:
+        chosen = pick("clip side", "spine", "handle", "side")
+        if chosen:
+            return chosen
+
+    preferred = _preferred_open6dor_attrs(mode, template_attrs)
+    if preferred:
+        return preferred[:1]
+    return attrs[:1]
+
+
 def _infer_open6dor_direction_attributes(cache_payload: Dict[str, Any]) -> List[str]:
     parser_output = cache_payload.get("parser_output", {}) or {}
     picked_object = parser_output.get("picked_object") or parser_output.get("target_object") or ""
@@ -240,7 +360,7 @@ def _infer_open6dor_direction_attributes(cache_payload: Dict[str, Any]) -> List[
 
     explicit_matches = _dedupe_preserve_order(explicit_matches)
     if explicit_matches:
-        return explicit_matches
+        return _canonical_open6dor_attrs_for_mode(orientation_mode, explicit_matches, template_attrs)
 
     preferred = _preferred_open6dor_attrs(orientation_mode, template_attrs)
     if preferred:
@@ -353,6 +473,11 @@ def predict_from_stage4_dir(
     raw_direction_attributes = [str(item).strip() for item in raw_direction_attributes if str(item or "").strip()]
     direction_attributes = _infer_direction_attributes(dataset, cache_payload)
     target_orientation = _vector_to_orientation_dict(direction_attributes, direction_vector)
+    orientation_diagnostics = _build_orientation_diagnostics(
+        direction_attributes,
+        direction_vector,
+        orientation_mode=(cache_payload.get("parser_output", {}) or {}).get("orientation_mode", ""),
+    )
 
     return {
         "dataset": dataset,
@@ -367,6 +492,7 @@ def predict_from_stage4_dir(
         "raw_direction_attributes": raw_direction_attributes,
         "direction_attributes": direction_attributes,
         "target_orientation": target_orientation,
+        "orientation_diagnostics": orientation_diagnostics,
         "target_object": (cache_payload.get("parser_output", {}) or {}).get("target_object")
         or (cache_payload.get("parser_output", {}) or {}).get("picked_object")
         or (cache_payload.get("grounding", {}) or {}).get("target_object")

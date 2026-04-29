@@ -30,3 +30,11 @@ dist/
 # Generated logs / temp files
 *.log
 *.tmp
+
+codex_history.md
+AGENTS.md
+
+.claude/
+.history/
+.vscode/
+.venv-sofar-local/
