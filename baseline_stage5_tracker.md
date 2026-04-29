@@ -466,6 +466,35 @@
   - 验证三桶 `upright / flat / plug` 是否能各自命中对应 expert
   - 对比单专家版本的 `accepted / rejected / fallback` 分布
 
+### 2026-04-29：三专家联合接回 smoke 已完成
+- 服务器结果文件：
+  - `sofar/output/open6dor_perception_summary_20260429_152132.json`
+  - `sofar/output/stage5_open6dor_pipeline_records_20260429_152132.json`
+- 结果概览：
+  - `success_count = 40`
+  - `error_count = 0`
+  - `used_stage5_count = 14`
+  - `fallback_count = 26`
+  - `decision_distribution = {use_stage5_direct: 8, use_stage5_conditional_verify: 6, reject_stage5_keep_parser_orientation: 15, shadow_stage5_for_debug: 11}`
+- family 级结论：
+  - `upright_vertical`
+    - `8/8` direct verified
+    - `semantic_status = top_up_consistent`
+    - 新 `upright expert` 继续稳定
+  - `plug_cap_sideways`
+    - `6` 条 `plug_right` 已进入 `stage5_conditional_verified`
+    - `11` 条 `cap / clip` 仍然走 `shadow_stage5_for_debug`
+    - 说明 `plug expert` 已开始提供有效增益，但当前 policy 仍偏保守
+  - `flat_upside_down_lying_flat`
+    - 本轮 `15` 条 `lying_flat` 全部 fallback
+    - 不是训练崩了，而是 verifier 直接按 `|z|` 阈值拒绝：如 `|z|=0.9996 threshold=0.45`
+    - 这说明 `flat expert` 已学到稳定向量，但当前 `lying_flat` 接回规则与新语义标签定义不一致
+- 当前判断：
+  - 三专家方案整体是成立的
+  - `upright` 已完全可用
+  - `plug` 已从训练转正推进到接回转正
+  - `flat` 的主要 blocker 已从“训练质量”转成“agent verifier / mode rule 仍按旧逻辑拒绝”
+
 ## 当前风险判断
 - `SpatialBench` 上大量样本被 skip 不等于 agent 失败，关键在于 skip 理由是否与题型语义一致。
 - `SpatialBench` 的正式训练风险仍然很高，因为题型异质性太强；当前更合理的做法是继续保留“适用子题验证”而不是推进全数据训练。
@@ -476,6 +505,7 @@
 - 细粒度 mode 继续拆 ckpt 的边际收益预计很低，当前优先级低于任务族专家拆分与 routing。
 - `flat / plug` 现在虽已决定从零训练，但训练完成后仍必须先做各自桶内 held-out 验证，不能直接写成全模式收益。
 - `flat / plug` scratch Round 1 已验证：训练链路通了，但模型质量还不够，不能直接接回主链。
+- 2026-04-29 本地已完成 `lying_flat` verifier semantic-axis 修正，并补齐 `old_rule_pass / new_rule_pass / target_axis / cosine_to_target_axis / verifier_rule_version / verifier_decision_reason` 调试字段；服务器 smoke 仍待复跑确认。
 
 ## 当前下一步
 - 当前最优先：做 `Open6DOR mode-level` 接回分析和策略修正。
@@ -492,7 +522,32 @@
   10. 本地 label-cleaning smoke test 已建立
   11. round3 manifest 已刷新，flat / plug 清洗生效
   12. `flat / plug Round 2` 已决定继续 from-scratch 训练
+  13. 三专家联合接回 smoke 已完成
+  14. 已在本地修正 `lying_flat` 的 verifier / routing 规则，下一步同步到服务器后复跑同一批三专家 smoke
+  15. 复跑时重点确认 `upright` 仍 `8/8 direct`、`plug_right` 仍 conditional verified、`lying_flat` 不再 `15/15 fallback`
 - 当前不再优先推进：
   - 新的 mixed training 变体
   - `SpatialBench` 全数据正式训练
   - 在没有 GT orientation 指标与任务族分桶结论前继续扩大 `Stage 8` 数量并直接宣称性能提升
+
+## 20. 2026-04-29 lying_flat verifier semantic-axis 修正已服务器复跑通过
+- 服务器结果：
+  - `open6dor_perception_summary_20260429_154727.json`
+  - `stage5_open6dor_pipeline_records_20260429_154727.json`
+- 关键结论：
+  - `success_count = 40`
+  - `error_count = 0`
+  - `used_stage5_count = 29`
+  - `fallback_count = 11`
+  - `upright = 8/8 accepted`
+  - `plug_right = 6/6 conditional verified`
+  - `lying_flat = 15/15 accepted`
+- verifier 侧确认：
+  - `old_rule_pass = 25`
+  - `new_rule_pass = 40`
+  - `verifier_rule_version` 已分成 `rule_v2_legacy` 与 `rule_v3_semantic_axis`
+  - `lying_flat` 不再被旧 `|z|` 规则整桶拒绝
+- 当前判断：
+  - 三专家 task_family smoke 已完成闭环
+  - `lying_flat` 的接回逻辑已和 manifest semantic label 对齐
+  - `upright` 与 `plug` 行为保持不变

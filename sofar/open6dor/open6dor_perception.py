@@ -985,6 +985,12 @@ def summarize_open6dor_agent_records(records):
     source_distribution = {}
     semantic_status_distribution = {}
     upright_semantic_status_distribution = {}
+    old_rule_pass_distribution = {}
+    new_rule_pass_distribution = {}
+    verifier_rule_version_distribution = {}
+    verifier_decision_reason_distribution = {}
+    target_axis_distribution = {}
+    cosine_values = []
     for record in agent_records:
         mode = str(record.get("stage5_mode") or "none")
         mode_distribution[mode] = mode_distribution.get(mode, 0) + 1
@@ -997,11 +1003,35 @@ def summarize_open6dor_agent_records(records):
         semantic_status_distribution[semantic_status] = semantic_status_distribution.get(semantic_status, 0) + 1
         if mode == "upright":
             upright_semantic_status_distribution[semantic_status] = upright_semantic_status_distribution.get(semantic_status, 0) + 1
+        old_rule_pass = record.get("stage5_old_rule_pass")
+        new_rule_pass = record.get("stage5_new_rule_pass")
+        verifier_rule_version = str(record.get("stage5_verifier_rule_version") or "none")
+        verifier_decision_reason = str(record.get("stage5_verifier_decision_reason") or "none")
+        target_axis = record.get("stage5_target_axis")
+        cosine_to_target_axis = record.get("stage5_cosine_to_target_axis")
+        old_rule_pass_distribution[str(bool(old_rule_pass))] = old_rule_pass_distribution.get(str(bool(old_rule_pass)), 0) + 1
+        new_rule_pass_distribution[str(bool(new_rule_pass))] = new_rule_pass_distribution.get(str(bool(new_rule_pass)), 0) + 1
+        verifier_rule_version_distribution[verifier_rule_version] = verifier_rule_version_distribution.get(verifier_rule_version, 0) + 1
+        verifier_decision_reason_distribution[verifier_decision_reason] = verifier_decision_reason_distribution.get(verifier_decision_reason, 0) + 1
+        target_axis_key = json.dumps(target_axis, ensure_ascii=False, sort_keys=True) if target_axis is not None else "none"
+        target_axis_distribution[target_axis_key] = target_axis_distribution.get(target_axis_key, 0) + 1
+        if cosine_to_target_axis is not None:
+            try:
+                cosine_values.append(float(cosine_to_target_axis))
+            except (TypeError, ValueError):
+                pass
     summary["stage5_mode_distribution"] = mode_distribution
     summary["stage5_checkpoint_family_distribution"] = family_distribution
     summary["stage5_checkpoint_source_distribution"] = source_distribution
     summary["stage5_semantic_status_distribution"] = semantic_status_distribution
     summary["stage5_upright_semantic_status_distribution"] = upright_semantic_status_distribution
+    summary["stage5_old_rule_pass_distribution"] = old_rule_pass_distribution
+    summary["stage5_new_rule_pass_distribution"] = new_rule_pass_distribution
+    summary["stage5_verifier_rule_version_distribution"] = verifier_rule_version_distribution
+    summary["stage5_verifier_decision_reason_distribution"] = verifier_decision_reason_distribution
+    summary["stage5_target_axis_distribution"] = target_axis_distribution
+    if cosine_values:
+        summary["stage5_cosine_to_target_axis_mean"] = round(sum(cosine_values) / len(cosine_values), 6)
     summary["stage5_applied_count"] = sum(1 for record in agent_records if record.get("stage5_applied"))
     return summary
 
@@ -1744,6 +1774,14 @@ def process_dataset(task_dir):
             "stage5_bottom_down_score": stage5_orientation_diagnostics.get("bottom_down_score"),
             "stage5_semantic_status": stage5_orientation_diagnostics.get("semantic_status"),
             "stage5_semantic_warning": stage5_orientation_diagnostics.get("semantic_warning"),
+            "stage5_old_rule_pass": agent_verification.get("old_rule_pass"),
+            "stage5_new_rule_pass": agent_verification.get("new_rule_pass"),
+            "stage5_target_axis": agent_verification.get("target_axis"),
+            "stage5_target_axis_label": agent_verification.get("target_axis_label"),
+            "stage5_target_axis_source": agent_verification.get("target_axis_source"),
+            "stage5_cosine_to_target_axis": agent_verification.get("cosine_to_target_axis"),
+            "stage5_verifier_rule_version": agent_verification.get("verifier_rule_version"),
+            "stage5_verifier_decision_reason": agent_verification.get("verifier_decision_reason"),
             "stage5_head": stage5_prediction,
             "stage5_shadow_head": stage5_shadow_prediction,
             "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
@@ -1805,6 +1843,14 @@ def process_dataset(task_dir):
             "stage5_bottom_down_score": stage5_orientation_diagnostics.get("bottom_down_score"),
             "stage5_semantic_status": stage5_orientation_diagnostics.get("semantic_status"),
             "stage5_semantic_warning": stage5_orientation_diagnostics.get("semantic_warning"),
+            "stage5_old_rule_pass": agent_verification.get("old_rule_pass"),
+            "stage5_new_rule_pass": agent_verification.get("new_rule_pass"),
+            "stage5_target_axis": agent_verification.get("target_axis"),
+            "stage5_target_axis_label": agent_verification.get("target_axis_label"),
+            "stage5_target_axis_source": agent_verification.get("target_axis_source"),
+            "stage5_cosine_to_target_axis": agent_verification.get("cosine_to_target_axis"),
+            "stage5_verifier_rule_version": agent_verification.get("verifier_rule_version"),
+            "stage5_verifier_decision_reason": agent_verification.get("verifier_decision_reason"),
             "stage5_head": stage5_prediction,
             "stage5_shadow_head": stage5_shadow_prediction,
             "stage5_fallback_scene_graph_used": stage5_fallback_scene_graph_used,
@@ -1872,6 +1918,14 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
                 "stage5_bottom_down_score": record.get("stage5_bottom_down_score"),
                 "stage5_semantic_status": record.get("stage5_semantic_status"),
                 "stage5_semantic_warning": record.get("stage5_semantic_warning"),
+                "stage5_old_rule_pass": record.get("stage5_old_rule_pass"),
+                "stage5_new_rule_pass": record.get("stage5_new_rule_pass"),
+                "stage5_target_axis": _json_dumps_safe(record.get("stage5_target_axis")),
+                "stage5_target_axis_label": record.get("stage5_target_axis_label"),
+                "stage5_target_axis_source": record.get("stage5_target_axis_source"),
+                "stage5_cosine_to_target_axis": record.get("stage5_cosine_to_target_axis"),
+                "stage5_verifier_rule_version": record.get("stage5_verifier_rule_version"),
+                "stage5_verifier_decision_reason": record.get("stage5_verifier_decision_reason"),
                 "stage5_fallback_scene_graph_used": record.get("stage5_fallback_scene_graph_used"),
                 "elapsed_sec": record.get("elapsed_sec"),
                 "error": record.get("error"),
@@ -1948,6 +2002,14 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
             "stage5_bottom_down_score",
             "stage5_semantic_status",
             "stage5_semantic_warning",
+            "stage5_old_rule_pass",
+            "stage5_new_rule_pass",
+            "stage5_target_axis",
+            "stage5_target_axis_label",
+            "stage5_target_axis_source",
+            "stage5_cosine_to_target_axis",
+            "stage5_verifier_rule_version",
+            "stage5_verifier_decision_reason",
             "stage5_fallback_scene_graph_used",
             "elapsed_sec",
             "error",

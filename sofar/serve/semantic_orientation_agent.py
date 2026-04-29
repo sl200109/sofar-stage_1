@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 
@@ -14,6 +15,10 @@ AUTO_CONTROLLER = "semantic_orientation_auto_router"
 
 OPEN6DOR_DIRECT_ALLOW_MODES = {"upright", "upright_lens_forth"}
 OPEN6DOR_CONDITIONAL_VERIFY_MODES = {"plug_right", "lying_flat"}
+OPEN6DOR_SEMANTIC_AXIS_VERIFY_MODES = {"lying_flat"}
+OPEN6DOR_SEMANTIC_AXIS_MIN_COSINE = 0.85
+OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION = "rule_v2_legacy"
+OPEN6DOR_SEMANTIC_AXIS_VERIFIER_RULE_VERSION = "rule_v3_semantic_axis"
 
 SPATIALBENCH_APPLICABLE_CATEGORIES = {
     "single_object_axis_direction",
@@ -559,6 +564,106 @@ def _open6dor_mode_threshold(orientation_mode: str) -> Optional[tuple[str, float
     return None
 
 
+def _normalize_vector3(value: Any, default: Optional[list[float]] = None) -> list[float]:
+    fallback = list(default or [0.0, 0.0, 1.0])
+    try:
+        values = list(value)
+    except TypeError:
+        return fallback[:3]
+    if len(values) < 3:
+        values = values + fallback[len(values) : 3]
+    components = []
+    for item in values[:3]:
+        components.append(_safe_float(item, default=0.0) or 0.0)
+    norm = math.sqrt(sum(component * component for component in components))
+    if not math.isfinite(norm) or norm <= 1e-6:
+        return fallback[:3]
+    return [round(component / norm, 6) for component in components]
+
+
+def _cosine_to_axis(vector: Any, axis: Any) -> float:
+    vec = _normalize_vector3(vector, default=[0.0, 0.0, 1.0])
+    target = _normalize_vector3(axis, default=[0.0, 0.0, 1.0])
+    cosine = sum(v * t for v, t in zip(vec, target))
+    if not math.isfinite(cosine):
+        return 0.0
+    return round(max(-1.0, min(1.0, cosine)), 6)
+
+
+def _open6dor_target_axis(target_orientation: Any) -> Dict[str, Any]:
+    axis = [0.0, 0.0, 1.0]
+    source = "fallback_default_axis"
+    label = "target_orientation"
+    if isinstance(target_orientation, dict) and target_orientation:
+        label, raw_axis = next(iter(target_orientation.items()))
+        axis = _normalize_vector3(raw_axis, default=axis)
+        source = "target_orientation"
+    elif isinstance(target_orientation, (list, tuple)):
+        axis = _normalize_vector3(target_orientation, default=axis)
+        source = "target_orientation"
+    return {
+        "target_axis": axis,
+        "target_axis_label": str(label or "target_orientation"),
+        "target_axis_source": source,
+    }
+
+
+def _open6dor_verifier_debug(
+    *,
+    orientation_mode: str,
+    vector: Any,
+    target_orientation: Any,
+) -> Dict[str, Any]:
+    mode = _normalize_mode_label(orientation_mode)
+    x = _safe_float(vector[0], default=0.0)
+    y = _safe_float(vector[1], default=0.0)
+    z = _safe_float(vector[2], default=0.0)
+    target_axis_payload = _open6dor_target_axis(target_orientation)
+    target_axis = target_axis_payload["target_axis"]
+    cosine_to_target_axis = _cosine_to_axis((x, y, z), target_axis)
+
+    threshold = _open6dor_mode_threshold(mode)
+    if threshold is None:
+        old_rule_pass = True
+        old_rule_reason = "mode_without_additional_threshold"
+    else:
+        rule, value = threshold
+        if rule == "z_min":
+            old_rule_pass = z >= value
+            old_rule_reason = f"z={z:.4f} threshold={value:.2f}"
+        elif rule == "x_min":
+            old_rule_pass = x >= value
+            old_rule_reason = f"x={x:.4f} threshold={value:.2f}"
+        else:
+            old_rule_pass = abs(z) <= value
+            old_rule_reason = f"|z|={abs(z):.4f} threshold={value:.2f}"
+
+    if mode in OPEN6DOR_SEMANTIC_AXIS_VERIFY_MODES:
+        new_rule_pass = cosine_to_target_axis >= OPEN6DOR_SEMANTIC_AXIS_MIN_COSINE
+        verifier_rule_version = OPEN6DOR_SEMANTIC_AXIS_VERIFIER_RULE_VERSION
+        verifier_decision_reason = (
+            f"semantic_axis cosine={cosine_to_target_axis:.4f} "
+            f"threshold={OPEN6DOR_SEMANTIC_AXIS_MIN_COSINE:.2f} "
+            f"target_axis={target_axis}"
+        )
+    else:
+        new_rule_pass = old_rule_pass
+        verifier_rule_version = OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION
+        verifier_decision_reason = old_rule_reason
+
+    return {
+        "old_rule_pass": bool(old_rule_pass),
+        "new_rule_pass": bool(new_rule_pass),
+        "target_axis": target_axis,
+        "target_axis_label": target_axis_payload["target_axis_label"],
+        "target_axis_source": target_axis_payload["target_axis_source"],
+        "cosine_to_target_axis": cosine_to_target_axis,
+        "verifier_rule_version": verifier_rule_version,
+        "verifier_decision_reason": verifier_decision_reason,
+        "verification_reason": verifier_decision_reason,
+    }
+
+
 def verify_open6dor_agent_outcome(
     decision: Dict[str, Any],
     prediction: Optional[Dict[str, Any]] = None,
@@ -628,6 +733,14 @@ def verify_open6dor_agent_outcome(
             "shadow_used": decision.get("decision") == "shadow_stage5_for_debug",
             "shadow_accepted": False,
             "triggered_reverification": True,
+            "old_rule_pass": False,
+            "new_rule_pass": False,
+            "target_axis": None,
+            "target_axis_label": "",
+            "target_axis_source": "missing",
+            "cosine_to_target_axis": None,
+            "verifier_rule_version": OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION,
+            "verifier_decision_reason": "missing_direction_vector",
         }
 
     target_orientation = target_orientation or (prediction or {}).get("target_orientation")
@@ -647,26 +760,31 @@ def verify_open6dor_agent_outcome(
             "shadow_used": decision.get("decision") == "shadow_stage5_for_debug",
             "shadow_accepted": False,
             "triggered_reverification": True,
+            "old_rule_pass": False,
+            "new_rule_pass": False,
+            "target_axis": None,
+            "target_axis_label": "",
+            "target_axis_source": "missing",
+            "cosine_to_target_axis": None,
+            "verifier_rule_version": OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION,
+            "verifier_decision_reason": "missing_target_orientation",
         }
 
-    x = _safe_float(vector[0], default=0.0)
-    y = _safe_float(vector[1], default=0.0)
-    z = _safe_float(vector[2], default=0.0)
-    threshold = _open6dor_mode_threshold(orientation_mode)
-    if threshold is None:
-        accepted = True
-        verification_reason = "mode_without_additional_threshold"
-    else:
-        rule, value = threshold
-        if rule == "z_min":
-            accepted = z >= value
-            verification_reason = f"z={z:.4f} threshold={value:.2f}"
-        elif rule == "x_min":
-            accepted = x >= value
-            verification_reason = f"x={x:.4f} threshold={value:.2f}"
-        else:
-            accepted = abs(z) <= value
-            verification_reason = f"|z|={abs(z):.4f} threshold={value:.2f}"
+    debug = _open6dor_verifier_debug(
+        orientation_mode=orientation_mode,
+        vector=vector,
+        target_orientation=target_orientation,
+    )
+    old_rule_pass = bool(debug["old_rule_pass"])
+    new_rule_pass = bool(debug["new_rule_pass"])
+    verification_reason = str(debug["verification_reason"])
+    target_axis = debug["target_axis"]
+    target_axis_label = debug["target_axis_label"]
+    target_axis_source = debug["target_axis_source"]
+    cosine_to_target_axis = debug["cosine_to_target_axis"]
+    verifier_rule_version = debug["verifier_rule_version"]
+    verifier_decision_reason = debug["verifier_decision_reason"]
+    accepted = new_rule_pass
 
     if decision.get("decision") == "shadow_stage5_for_debug":
         return {
@@ -684,6 +802,14 @@ def verify_open6dor_agent_outcome(
             "shadow_used": True,
             "shadow_accepted": bool(accepted),
             "triggered_reverification": True,
+            "old_rule_pass": old_rule_pass,
+            "new_rule_pass": new_rule_pass,
+            "target_axis": target_axis,
+            "target_axis_label": target_axis_label,
+            "target_axis_source": target_axis_source,
+            "cosine_to_target_axis": cosine_to_target_axis,
+            "verifier_rule_version": verifier_rule_version,
+            "verifier_decision_reason": verifier_decision_reason,
         }
 
     if accepted:
@@ -702,6 +828,14 @@ def verify_open6dor_agent_outcome(
             "shadow_used": False,
             "shadow_accepted": False,
             "triggered_reverification": True,
+            "old_rule_pass": old_rule_pass,
+            "new_rule_pass": new_rule_pass,
+            "target_axis": target_axis,
+            "target_axis_label": target_axis_label,
+            "target_axis_source": target_axis_source,
+            "cosine_to_target_axis": cosine_to_target_axis,
+            "verifier_rule_version": verifier_rule_version,
+            "verifier_decision_reason": verifier_decision_reason,
         }
 
     return {
@@ -719,6 +853,14 @@ def verify_open6dor_agent_outcome(
         "shadow_used": False,
         "shadow_accepted": False,
         "triggered_reverification": True,
+        "old_rule_pass": old_rule_pass,
+        "new_rule_pass": new_rule_pass,
+        "target_axis": target_axis,
+        "target_axis_label": target_axis_label,
+        "target_axis_source": target_axis_source,
+        "cosine_to_target_axis": cosine_to_target_axis,
+        "verifier_rule_version": verifier_rule_version,
+        "verifier_decision_reason": verifier_decision_reason,
     }
 
 

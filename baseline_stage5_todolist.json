@@ -209,7 +209,7 @@
                       "owner":  "server",
                       "status":  "in_progress",
                       "title":  "执行 Open6DOR mode-aware 后续验证",
-                      "notes":  "routing smoke 已证明三桶路由记录写入正确；本地已确认旧 manifest 中 upright 标签存在负 z 污染。下一步先刷新 manifest，再复跑 upright diagnostics / retrain。"
+                      "notes":  "routing smoke 已证明三桶路由记录写入正确；本地已完成 lying_flat semantic-axis verifier 修正并补齐 debug 字段。下一步同步到服务器后，复跑同一批 40-case 三专家 smoke，确认 upright / plug 行为不变、flat 不再 15/15 fallback。"
                   },
                   {
                       "id":  "stage5_open6dor_freeze_upright_expert_ckpt",
@@ -326,23 +326,37 @@
                   {
                       "id":  "stage5_open6dor_flat_expert_training_round2",
                       "owner":  "server",
-                      "status":  "todo",
+                      "status":  "done",
                       "title":  "执行 flat/upside_down/lying_flat 专家 Round 2 训练",
-                      "notes":  "使用 round3 manifest，from-scratch；train=121, val=11, test=8。"
+                      "notes":  "已完成；best_val_loss=0.000683，final_test_metrics.mean_cosine=0.997657。训练侧已转正。"
                   },
                   {
                       "id":  "stage5_open6dor_plug_expert_training_round2",
                       "owner":  "server",
-                      "status":  "todo",
+                      "status":  "done",
                       "title":  "执行 plug/cap/sideways 专家 Round 2 训练",
-                      "notes":  "使用 round3 manifest，from-scratch；train=80, val=10, test=9。"
+                      "notes":  "已完成；best_val_loss=0.106158，final_test_metrics.mean_cosine=0.554172。训练侧已明显优于 Round 1。"
                   },
                   {
                       "id":  "stage5_open6dor_three_expert_task_family_smoke",
                       "owner":  "server",
-                      "status":  "todo",
+                      "status":  "done",
                       "title":  "执行 upright/flat/plug 三专家联合接回 smoke",
-                      "notes":  "使用 task_family routing 同时挂载三类 expert checkpoint，检查各桶 accepted/rejected/fallback 分布。"
+                      "notes":  "已完成；upright 8/8 direct verified，plug_right 6 条 conditional verified，flat 当前被 verifier 按 |z| 阈值全部拒绝，主要 blocker 已转为 lying_flat 接回规则。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_flat_verifier_rule_fix",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "修正 lying_flat 的 verifier / routing 规则",
+                      "notes":  "已在本地把 lying_flat verifier 从旧 |z| 阈值改成 semantic-axis cosine verification，并补齐 old_rule_pass / new_rule_pass / target_axis / cosine_to_target_axis / verifier_rule_version / verifier_decision_reason；服务器 40-case smoke 已复跑通过，lying_flat 15/15 accepted。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_modeaware_followup",
+                      "owner":  "server",
+                      "status":  "done",
+                      "title":  "执行 Open6DOR mode-aware 后续验证",
+                      "notes":  "已完成本地 verifier 修正后的服务器复跑；40-case smoke success_count=40,error_count=0，upright 8/8 direct verified，plug_right 6/6 conditional verified，lying_flat 15/15 accepted。"
                   }
               ]
 }
