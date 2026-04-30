@@ -575,3 +575,57 @@
   - 只完成脚本与交接更新
   - 未启动 400-case evaluation
   - 仍然不训练、不改 verifier
+
+## 23. 2026-04-29 400-case mode parser 与 validation gate 加固
+- `parse_orientation_mode_from_task_dir` 已改为自底向上扫描所有 path parts。
+- 现在能正确解析类似：
+  - `.../Place_xxx.__plug_right/20240824-xxxx_no_interaction -> plug_right`
+  - `.../Place_xxx.__lying_flat/20240824-xxxx_no_interaction -> lying_flat`
+- `from4389` summary 现在强制包含并检查：
+  - `available_total`
+  - `empty_mode_count`
+  - `other_family_count`
+  - `available_family_distribution`
+  - `selected_family_distribution`
+  - `selected_orientation_mode_distribution`
+- validation gate 规则：
+  - `empty_mode_count > 0` 或 `selected_total != 400` 或 `selected_family_distribution` 不符合预期时，不生成 final method command
+  - 仍保留 manifest / summary 输出，方便服务器复核
+
+## 24. 2026-04-30 from4389 subset 首轮服务器生成失败点已定位
+- 服务器已成功生成：
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json`
+- 但该轮 `summary.validation.passed = false`，关键字段为：
+  - `available_total = 1744`
+  - `empty_mode_count = 0`
+  - `other_family_count = 735`
+  - `selected_total = 400`
+  - `selected_family_distribution = {cap_clip_sideways: 104, flat_upside_down_lying_flat: 112, other: 41, plug_right: 34, upright_vertical: 109}`
+- 失败原因已明确：
+  - `parse_orientation_mode_from_task_dir` 已经正确，`run-level path` 不是当前 blocker
+  - 真正问题是 `mode -> task_family` taxonomy 过窄，导致 `handle_right / blade_right / spout_right / remote_control_forth / watch_upright` 等大量有效 mode 被归入 `other`
+  - 当前严格白名单下 `plug_right` 仅 `34` 条，因此不可能满足 `100` 条目标配额
+
+## 25. 2026-04-30 已在本地扩充 task-family taxonomy，并加固 command gate
+- 本轮本地改动文件：
+  - `sofar/open6dor/eval_subset_sampling.py`
+  - `sofar/tools/generate_open6dor_eval_subset_400_from4389.py`
+  - `sofar/tools/analyze_open6dor_stage5_records.py`
+  - `tests/test_open6dor_eval_subset_sampling.py`
+- 已实现内容：
+  - `upright_vertical` 扩到 `watch_upright / tape_measure_upright` 等 upright 派生 mode
+  - `flat_upside_down_lying_flat` 扩到 `lower_rim` 等 flat-like mode
+  - `plug_right` 家族扩到 `handle_* / blade_* / prong_right / spout_right / ballpoint_right / clasp_right / bulb_right_handle_left`
+  - `cap_clip_sideways` 扩到 `cap_* / clip_* / sideways* / *_forth / *_far`
+  - 增加关键词兜底规则，尽量把当前已知 mode 全部并入四个目标 family，避免再落入 `other`
+  - `generate_open6dor_eval_subset_400_from4389.py` 与 `analyze_open6dor_stage5_records.py` 现在都会在 summary 中写入 `final_method_command_generated`
+  - 如果 validation 不通过，会明确删除旧的 `open6dor_400_final_method_command.txt`
+- 本地验证状态：
+  - `python -m py_compile sofar/open6dor/eval_subset_sampling.py sofar/tools/generate_open6dor_eval_subset_400_from4389.py sofar/tools/analyze_open6dor_stage5_records.py tests/test_open6dor_eval_subset_sampling.py`
+  - `python -m unittest tests.test_open6dor_eval_subset_sampling`
+  - 两项均已通过
+- 当前结论：
+  - 这轮仍然不跑 400-case evaluation
+  - 下一步只需要把更新后的 sampling 代码同步到服务器，然后重跑 `from4389` manifest 生成，重新检查 `other_family_count` 和 `selected_family_distribution`

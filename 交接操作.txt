@@ -1,24 +1,26 @@
-当前版本：2026-04-29
+当前版本：2026-04-30
 
 状态：
-- 40-case smoke 已闭环
-- 400-case formal subset 的来源已修正为 server-side from4389 task tree
-- 当前不训练、不改 verifier、不跑 400-case evaluation
+- 不训练
+- 不改 verifier
+- 不跑 400-case evaluation
+- 只重跑 from4389 subset 生成
 
 文件夹：
-- sofar/open6dor
-- sofar/serve
-- tools
-- paper_results/open6dor_short_experiments_20260429
-- baseline_stage5_tracker.md
-- baseline_stage5_todolist.json
-- 当前代码地图与交接总表.md
+- `sofar/open6dor`
+- `sofar/tools`
+- `tests`
 
 文件：
-- 交接操作.txt
+- `baseline_stage5_tracker.md`
+- `baseline_stage5_todolist.json`
+- `当前代码地图与交接总表.md`
+- `交接操作.txt`
 
 服务器目标路径：
-- /data/coding/SoFar
+- `sofar/open6dor/...` -> `/data/coding/SoFar/open6dor/...`
+- `sofar/tools/...` -> `/data/coding/SoFar/tools/...`
+- `tests/...` -> `/data/coding/SoFar/tests/...`
 
 服务器命令：
 ```bash
@@ -30,13 +32,12 @@ python tools/generate_open6dor_eval_subset_400_from4389.py --dataset-root /data/
 - `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json`
 - `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json`
 - `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json`
-- `paper_results/open6dor_short_experiments_20260429/open6dor_400_final_method_command.txt`
+- 只有 validation 通过时才允许存在：
+  - `paper_results/open6dor_short_experiments_20260429/open6dor_400_final_method_command.txt`
 
 失败时回传：
 - 终端完整报错
-- 如果目录已部分生成，回传 `paper_results/open6dor_short_experiments_20260429/` 下的最新 JSON
+- `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json`
 
 需要回传的文件夹/文件：
-- paper_results/open6dor_short_experiments_20260429/
-- tools/generate_open6dor_eval_subset_400_from4389.py
-- sofar/open6dor/eval_subset_sampling.py
+- `paper_results/open6dor_short_experiments_20260429/`

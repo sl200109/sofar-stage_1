@@ -1,15 +1,31 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+REPO_CANDIDATES = [WORKSPACE_ROOT, WORKSPACE_ROOT / "sofar"]
+for candidate in REPO_CANDIDATES:
+    candidate_str = str(candidate)
+    if candidate.exists() and candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
 
-from sofar.open6dor.eval_subset_sampling import build_eval_subset_from_dataset_root, write_json
-from sofar.serve import runtime_paths
+try:
+    from open6dor.eval_subset_sampling import (
+        build_eval_subset_from_dataset_root,
+        validate_eval_subset_summary,
+        write_json,
+    )
+    from serve import runtime_paths
+except ImportError:
+    from sofar.open6dor.eval_subset_sampling import (
+        build_eval_subset_from_dataset_root,
+        validate_eval_subset_summary,
+        write_json,
+    )
+    from sofar.serve import runtime_paths
 
 
 def parse_args():
@@ -63,17 +79,29 @@ def main():
     subset = build_eval_subset_from_dataset_root(dataset_root, seed=args.seed, target_total=args.subset_size)
     rows = subset["rows"]
     summary = subset["summary"]
+    validation = validate_eval_subset_summary(summary)
+    summary["validation"] = validation
 
     manifest_path = output_dir / "open6dor_eval_subset_400_from4389_seed42.json"
     task_list_path = output_dir / "open6dor_eval_subset_400_from4389_seed42_task_list.json"
     summary_path = output_dir / "open6dor_eval_subset_400_from4389_seed42_summary.json"
+    command_path = output_dir / "open6dor_400_final_method_command.txt"
 
     write_json(manifest_path, rows)
     write_json(task_list_path, [row["task_dir"] for row in rows])
+    if validation["passed"]:
+        write_final_command(output_dir, task_list_path)
+        summary["final_method_command_generated"] = True
+    elif command_path.exists():
+        command_path.unlink()
+        summary["final_method_command_generated"] = False
+    else:
+        summary["final_method_command_generated"] = False
     write_json(summary_path, summary)
-    write_final_command(output_dir, task_list_path)
 
     print(summary_path.read_text(encoding="utf-8"))
+    if not validation["passed"]:
+        print(json.dumps({"validation": validation}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

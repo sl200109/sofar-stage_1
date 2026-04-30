@@ -8,15 +8,48 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
-UPRIGHT_MODES = {"upright", "upright_lens_forth", "upright_textual", "vertical"}
-FLAT_MODES = {"upside_down", "upside_down_textual", "lying_flat", "lying_sideways"}
-PLUG_RIGHT_MODES = {"plug_right"}
+UPRIGHT_MODES = {
+    "upright",
+    "upright_lens_forth",
+    "upright_textual",
+    "vertical",
+    "watch_upright",
+    "tape_measure_upright",
+}
+FLAT_MODES = {
+    "upside_down",
+    "upside_down_textual",
+    "lying_flat",
+    "lying_sideways",
+    "lower_rim",
+}
+PLUG_RIGHT_MODES = {
+    "plug_right",
+    "plug_left",
+    "handle_right",
+    "handle_left",
+    "handle_right_jaw_left",
+    "blade_right",
+    "blades_right",
+    "bulb_right_handle_left",
+    "prong_right",
+    "spout_right",
+    "ballpoint_right",
+    "clasp_right",
+}
 CAP_CLIP_SIDEWAYS_MODES = {
     "cap_left_bottom_right",
     "cap_right_bottom_left",
+    "cap_right",
+    "cap_forth",
     "clip_sideways",
     "sideways",
     "sideways_textual",
+    "hat_sideways",
+    "remote_control_forth",
+    "multimeter_forth",
+    "card_forth_textual",
+    "earpiece_far",
 }
 
 MODE_SUFFIX_RE = re.compile(r"(?:\.__|__)([a-z0-9_]+)$", re.IGNORECASE)
@@ -27,14 +60,15 @@ def normalize_orientation_mode(value: Any) -> str:
 
 
 def parse_orientation_mode_from_task_dir(task_dir: Path | str) -> str:
-    name = Path(task_dir).name
-    match = MODE_SUFFIX_RE.search(name)
-    if match:
-        return normalize_orientation_mode(match.group(1))
-    if ".__" in name:
-        return normalize_orientation_mode(name.rsplit(".__", 1)[-1])
-    if "__" in name:
-        return normalize_orientation_mode(name.rsplit("__", 1)[-1])
+    path = Path(task_dir)
+    for part in reversed(path.parts):
+        match = MODE_SUFFIX_RE.search(part)
+        if match:
+            return normalize_orientation_mode(match.group(1))
+        if ".__" in part:
+            return normalize_orientation_mode(part.rsplit(".__", 1)[-1])
+        if "__" in part:
+            return normalize_orientation_mode(part.rsplit("__", 1)[-1])
     return ""
 
 
@@ -47,6 +81,14 @@ def classify_task_family(orientation_mode: Any) -> str:
     if mode in PLUG_RIGHT_MODES:
         return "plug_right"
     if mode in CAP_CLIP_SIDEWAYS_MODES:
+        return "cap_clip_sideways"
+    if "upright" in mode or mode.endswith("_upright"):
+        return "upright_vertical"
+    if "upside_down" in mode or mode.startswith("lying_"):
+        return "flat_upside_down_lying_flat"
+    if any(token in mode for token in ("plug_", "handle_", "blade_", "prong_", "spout_", "ballpoint_", "clasp_")):
+        return "plug_right"
+    if any(token in mode for token in ("cap_", "clip_", "sideways", "_forth", "_far")):
         return "cap_clip_sideways"
     return "other"
 
@@ -147,6 +189,8 @@ def build_eval_subset_from_task_dirs(
         "sampling_seed": seed,
         "target_total": target_total,
         "available_total": len(enriched),
+        "empty_mode_count": sum(1 for row in enriched if not row["orientation_mode"]),
+        "other_family_count": sum(1 for row in enriched if row["task_family"] == "other"),
         "selected_total": len(selected),
         "available_family_distribution": dict(Counter(row["task_family"] for row in enriched)),
         "available_orientation_mode_distribution": dict(Counter(row["orientation_mode"] for row in enriched)),
@@ -157,6 +201,30 @@ def build_eval_subset_from_task_dirs(
         "selected_sample_ids": len({row["sample_id"] for row in selected}),
     }
     return {"rows": selected, "summary": summary}
+
+
+def validate_eval_subset_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    expected_family_distribution = {
+        "upright_vertical": 100,
+        "flat_upside_down_lying_flat": 100,
+        "plug_right": 100,
+        "cap_clip_sideways": 100,
+    }
+    selected_family_distribution = summary.get("selected_family_distribution", {}) or {}
+    reasons = []
+    if int(summary.get("empty_mode_count", 0)) > 0:
+        reasons.append("empty_mode_count_gt_zero")
+    if int(summary.get("selected_total", 0)) != 400:
+        reasons.append("selected_total_not_400")
+    if int(summary.get("other_family_count", 0)) > 0:
+        reasons.append("other_family_present")
+    if dict(selected_family_distribution) != expected_family_distribution:
+        reasons.append("selected_family_distribution_mismatch")
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "expected_family_distribution": expected_family_distribution,
+    }
 
 
 def build_eval_subset_from_dataset_root(

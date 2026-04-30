@@ -10,12 +10,19 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+REPO_CANDIDATES = [WORKSPACE_ROOT, WORKSPACE_ROOT / "sofar"]
+for candidate in REPO_CANDIDATES:
+    candidate_str = str(candidate)
+    if candidate.exists() and candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
 
-from sofar.open6dor.eval_subset_sampling import build_eval_subset_from_dataset_root
-from sofar.serve.semantic_orientation_agent import verify_open6dor_agent_outcome
+try:
+    from open6dor.eval_subset_sampling import build_eval_subset_from_dataset_root, validate_eval_subset_summary
+    from serve.semantic_orientation_agent import verify_open6dor_agent_outcome
+except ImportError:
+    from sofar.open6dor.eval_subset_sampling import build_eval_subset_from_dataset_root, validate_eval_subset_summary
+    from sofar.serve.semantic_orientation_agent import verify_open6dor_agent_outcome
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -428,6 +435,7 @@ def main() -> None:
     subset = None
     if args.dataset_root is not None:
         subset = build_eval_subset_from_dataset_root(args.dataset_root.resolve(), seed=args.seed, target_total=args.subset_size)
+        subset["summary"]["validation"] = validate_eval_subset_summary(subset["summary"])
 
     before_pipeline = pipeline_counts(before_summary_raw, before)
     after_pipeline = pipeline_counts(after_summary_raw, after)
@@ -453,12 +461,19 @@ def main() -> None:
 
     if subset is not None:
         write_json(output_dir / "open6dor_eval_subset_400_from4389_seed42.json", subset["rows"])
-        write_json(output_dir / "open6dor_eval_subset_400_from4389_seed42_summary.json", subset["summary"])
         write_json(output_dir / "open6dor_eval_subset_400_from4389_seed42_task_list.json", [row["task_dir"] for row in subset["rows"]])
-        write_final_command(
-            output_dir / "open6dor_400_final_method_command.txt",
-            output_dir / "open6dor_eval_subset_400_from4389_seed42_task_list.json",
-        )
+        if subset["summary"]["validation"]["passed"]:
+            write_final_command(
+                output_dir / "open6dor_400_final_method_command.txt",
+                output_dir / "open6dor_eval_subset_400_from4389_seed42_task_list.json",
+            )
+            subset["summary"]["final_method_command_generated"] = True
+        else:
+            command_path = output_dir / "open6dor_400_final_method_command.txt"
+            if command_path.exists():
+                command_path.unlink()
+            subset["summary"]["final_method_command_generated"] = False
+        write_json(output_dir / "open6dor_eval_subset_400_from4389_seed42_summary.json", subset["summary"])
 
     write_markdown_report(
         output_dir / "open6dor_short_experiments_report.md",

@@ -384,14 +384,14 @@
                       "owner":  "local",
                       "status":  "in_progress",
                       "title":  "生成 400-case mode-balanced evaluation subset",
-                      "notes":  "旧的 407-source local subset 已降级为历史记录；正式 400-case 现在改由 server-side from4389 task tree sampler 生成。"
+                      "notes":  "旧的 407-source local subset 已降级为历史记录；正式 400-case 现在改由 server-side from4389 task tree sampler 生成。首轮服务器结果显示 empty_mode_count=0 但 other_family_count=735，问题已定位为 taxonomy 过窄；本地已扩充 mode->family 映射并等待服务器重跑。"
                   },
                   {
                       "id":  "stage5_open6dor_400_case_final_method_command",
                       "owner":  "local",
-                      "status":  "done",
+                      "status":  "in_progress",
                       "title":  "准备 400-case final method server command",
-                      "notes":  "已写入 open6dor_400_final_method_command.txt，使用当前 three experts + task_family routing + semantic-axis verifier。"
+                      "notes":  "只有当 from4389 summary validation 通过时才允许生成。当前已加固删除旧命令文件的 gate，并在 summary 中写入 final_method_command_generated。"
                   },
                   {
                       "id":  "stage5_open6dor_400_case_formal_eval",
