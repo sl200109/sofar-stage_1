@@ -764,3 +764,70 @@
   - 这一步只补 evaluator 闭环与 same-subset ablation runner
   - 不改 Stage5 policy / agent policy / evaluator 公式 / 训练代码
   - 默认交接与 smoke 命令均限制为 `--max-tasks 20` 或 `50`，不在本地阶段直接跑完整 `400-case`
+
+## 31. 2026-05-06 rule_v3_verified 已在本地接入 Open6DOR agent policy
+- 本轮本地改动文件：
+  - `sofar/serve/semantic_orientation_agent.py`
+  - `sofar/open6dor/open6dor_perception.py`
+  - `tests/test_open6dor_rule_v3_agent.py`
+- 已实现内容：
+  - 保留 `rule_v2` 默认与旧行为不变
+  - 新增显式 `--agent-policy rule_v3_verified`
+  - `rule_v3_verified` 在 `stage4_cache_available=True`、family 支持、checkpoint 可用时：
+    - 即使 `fallback_required=True`
+    - 也允许进入 `use_stage5_conditional_verify`
+    - verifier rejected 后仍回退 baseline / parser orientation
+  - 新增 `agent_signals` 字段：
+    - `rule_v3_allowed_by_fallback_override`
+    - `rule_v3_block_reason`
+    - `checkpoint_*`
+    - `verifier_*`
+  - `agent_summary` 已补：
+    - `agent_policy_distribution`
+    - `decision_distribution_by_policy`
+    - `selected_execution_mode_distribution_by_policy`
+    - `used_stage5_count_by_policy`
+    - `fallback_count_by_policy`
+    - `shadow_used_count_by_policy`
+    - `rejected_count_by_policy`
+    - `conditional_verify_count_by_policy`
+    - `rule_v3_fallback_override_count`
+    - `rule_v3_block_reason_distribution`
+- 本地验证状态：
+  - `python -m py_compile sofar/serve/semantic_orientation_agent.py sofar/open6dor/open6dor_perception.py sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_rule_v3_agent.py`
+  - `python -m unittest tests.test_open6dor_rule_v3_agent`
+  - `python -m unittest tests.test_open6dor_ablation_runner`
+  - 三项均已通过
+- 当前结论：
+  - `rule_v3_verified` 已真实接入
+  - 但默认策略仍然是 `rule_v2`
+  - 下一步应先做 `20-case / 50-case` same-subset smoke，再看 `used_stage5_count`、`conditional_verify_count` 与 `six_dof_overall` 是否有温和改善
+
+## 32. 2026-05-06 阶段 4 family mapper 已在本地扩展
+- 本轮本地改动文件：
+  - `sofar/open6dor/open6dor_perception.py`
+  - `sofar/serve/semantic_orientation_agent.py`
+  - `tests/test_open6dor_stage5_family_mapper.py`
+- 已实现内容：
+  - 扩展 `Open6DOR Stage5 task-family mapper`，新增并稳定映射：
+    - `upright_vertical`
+    - `flat_upside_down_lying_flat`
+    - `plug_cap_sideways`
+    - `part_axis_left_right`
+    - `unknown`
+  - 新增 `part_axis_left_right` family：
+    - 当前默认 `shadow-only`
+    - 没有专门 checkpoint 时不会复用 `plug/shared` checkpoint
+    - `rule_v3_verified` 下无 checkpoint 时不会 inject
+  - `summary / records` 新增 family-level 统计：
+    - `task_family_distribution`
+    - `checkpoint_available_by_family`
+    - `stage5_run/used/shadow/accepted/rejected_count_by_family`
+    - `unknown_family_count`
+    - `part_axis_left_right_count`
+    - `part_axis_left_right_shadow_only_count`
+    - `part_axis_left_right_used_count`
+- 当前结论：
+  - `unknown family` 预期会下降
+  - `part_axis_left_right` 现在可以被显式看见并计数，但默认仍是安全的 `shadow-only`
+  - 下一步需要先跑 `20/50-case smoke`，确认 family distribution 与 `rule_v3` 的实际命中分布

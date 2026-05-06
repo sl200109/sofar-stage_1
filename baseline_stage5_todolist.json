@@ -436,6 +436,20 @@
                       "notes":  "已新增 analysis/run_open6dor_subset_ablation.py 与 tests/test_open6dor_ablation_runner.py；支持 dry-run/eval-only/skip-existing/max-tasks 切片、method 独立输出目录、subset mirror evaluator、ablation_summary 与 error_breakdown 汇总。"
                   },
                   {
+                      "id":  "stage5_open6dor_rule_v3_verified_policy",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Open6DOR Stage5 agent policy: rule_v3_verified",
+                      "notes":  "已在 semantic_orientation_agent.py / open6dor_perception.py 接入 rule_v3_verified，保持 rule_v2 默认与旧行为不变；新增 tests/test_open6dor_rule_v3_agent.py，ablation runner 已可识别并为 pscr_rule_v3_verified 生成 --agent-policy rule_v3_verified。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_family_mapper_expansion",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "扩展 Open6DOR Stage5 family mapper 并加入 part-axis shadow-only family",
+                      "notes":  "已在 open6dor_perception.py 扩展 upright/flat/plug/part_axis_left_right/unknown 映射，新增 part-axis shadow-only 路由与 family-level summary 统计，并补 tests/test_open6dor_stage5_family_mapper.py。"
+                  },
+                  {
                       "id":  "stage5_open6dor_paper_core_120_formal_eval",
                       "owner":  "server",
                       "status":  "todo",

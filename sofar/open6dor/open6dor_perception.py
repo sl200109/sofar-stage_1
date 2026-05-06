@@ -79,7 +79,46 @@ DEFAULT_STAGE5_EXPERT_ROUTING = "off"
 STAGE5_TASK_FAMILY_UPRIGHT = "upright_vertical"
 STAGE5_TASK_FAMILY_FLAT = "flat_upside_down_lying_flat"
 STAGE5_TASK_FAMILY_PLUG = "plug_cap_sideways"
+STAGE5_TASK_FAMILY_PART_AXIS = "part_axis_left_right"
 STAGE5_TASK_FAMILY_UNKNOWN = "unknown"
+UPRIGHT_VERTICAL_MODES = {
+    "upright",
+    "upright_lens_forth",
+    "upright_textual",
+    "watch_upright",
+    "tape_measure_upright",
+}
+FLAT_UPSIDE_DOWN_LYING_FLAT_MODES = {
+    "lying_flat",
+    "upside_down",
+    "lower_rim",
+    "upside_down_textual",
+}
+PLUG_CAP_SIDEWAYS_MODES = {
+    "plug_right",
+    "prong_right",
+    "cap_right",
+    "cap_forth",
+    "cap_left_bottom_right",
+    "cap_right_bottom_left",
+    "sideways",
+    "sideways_textual",
+    "clip_sideways",
+    "card_forth_textual",
+    "remote_control_forth",
+    "earpiece_far",
+    "multimeter_forth",
+}
+PART_AXIS_LEFT_RIGHT_MODES = {
+    "handle_left",
+    "handle_right",
+    "blade_right",
+    "blades_right",
+    "ballpoint_right",
+    "clasp_right",
+    "spout_right",
+    "bulb_right_handle_left",
+}
 GENERIC_MODE_HINTS = {
     "upright": ["top", "bottom", "handle", "opening"],
     "upright_lens_forth": ["top", "bottom", "lens", "front"],
@@ -179,6 +218,16 @@ def _safe_float(value):
 
 def infer_open6dor_stage5_task_family(orientation_mode):
     mode = _normalize_stage5_mode_label(orientation_mode)
+    if not mode:
+        return STAGE5_TASK_FAMILY_UNKNOWN
+    if mode in UPRIGHT_VERTICAL_MODES:
+        return STAGE5_TASK_FAMILY_UPRIGHT
+    if mode in FLAT_UPSIDE_DOWN_LYING_FLAT_MODES or mode == "flat":
+        return STAGE5_TASK_FAMILY_FLAT
+    if mode in PLUG_CAP_SIDEWAYS_MODES:
+        return STAGE5_TASK_FAMILY_PLUG
+    if mode in PART_AXIS_LEFT_RIGHT_MODES:
+        return STAGE5_TASK_FAMILY_PART_AXIS
     family = classify_eval_task_family(mode)
     if family == "upright_vertical":
         return STAGE5_TASK_FAMILY_UPRIGHT
@@ -222,6 +271,8 @@ def resolve_open6dor_stage5_checkpoint_route(
         "checkpoint_path": shared_checkpoint if routing_policy == "off" else None,
         "checkpoint_source": "shared_default" if routing_policy == "off" else "none",
         "route_reason": "expert_routing_off" if routing_policy == "off" else "",
+        "family_shadow_only": False,
+        "family_checkpoint_available": bool(shared_checkpoint) if routing_policy == "off" else False,
         "signals": {
             "orientation_mode": _normalize_stage5_mode_label(orientation_mode),
             "task_family": family,
@@ -233,20 +284,45 @@ def resolve_open6dor_stage5_checkpoint_route(
         },
     }
     if routing_policy == "off":
+        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
         return route
 
     if fallback_required:
         route["route_reason"] = "fallback_required"
+        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
         return route
     if not stage4_cache_available:
         route["route_reason"] = "stage4_cache_missing"
+        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
+        return route
+    if family == STAGE5_TASK_FAMILY_PART_AXIS:
+        expert_checkpoints = STAGE5_OPTIONS.get("expert_checkpoints") or {}
+        selected_checkpoint = _optional_path_string(expert_checkpoints.get(family))
+        route["family_shadow_only"] = not bool(selected_checkpoint)
+        route["family_checkpoint_available"] = bool(selected_checkpoint)
+        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
+        if not selected_checkpoint:
+            route["route_reason"] = "part_axis_left_right_no_checkpoint_shadow_only"
+            return route
+        route["checkpoint_path"] = selected_checkpoint
+        route["checkpoint_source"] = "family_specific"
+        route["route_reason"] = f"{family}_expert"
         return route
     if family == STAGE5_TASK_FAMILY_UNKNOWN:
         route["route_reason"] = "unknown_task_family"
+        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
         return route
 
     expert_checkpoints = STAGE5_OPTIONS.get("expert_checkpoints") or {}
     selected_checkpoint = _optional_path_string(expert_checkpoints.get(family))
+    route["family_checkpoint_available"] = bool(selected_checkpoint)
+    route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
+    route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
     if not selected_checkpoint:
         route["route_reason"] = f"missing_{family}_expert_checkpoint"
         return route
@@ -390,6 +466,12 @@ def parse_args():
         help="Optional override for the plug/cap/sideways expert checkpoint.",
     )
     parser.add_argument(
+        "--stage5-part-axis-expert-checkpoint",
+        type=str,
+        default=None,
+        help="Optional override for the handle/blade/spout/part-axis expert checkpoint.",
+    )
+    parser.add_argument(
         "--agent-mode",
         choices=["off", "dataset", "auto"],
         default=None,
@@ -399,6 +481,7 @@ def parse_args():
         "--agent-policy",
         type=str,
         default="rule_v2",
+        choices=["rule_v2", "rule_v3_verified"],
         help="Agent policy label written into logs and debug traces.",
     )
     parser.add_argument(
@@ -1043,9 +1126,24 @@ def load_open6dor_stage4_signals(task_dir):
 def summarize_open6dor_agent_records(records):
     agent_records = [record for record in records if record.get("stage5_enabled")]
     summary = summarize_agent_records(agent_records)
+    policy_distribution = {}
+    decision_distribution_by_policy = {}
+    execution_mode_distribution_by_policy = {}
+    used_stage5_count_by_policy = {}
+    fallback_count_by_policy = {}
+    shadow_used_count_by_policy = {}
+    rejected_count_by_policy = {}
+    conditional_verify_count_by_policy = {}
+    rule_v3_block_reason_distribution = {}
     mode_distribution = {}
     family_distribution = {}
     source_distribution = {}
+    checkpoint_available_by_family = {}
+    stage5_run_count_by_family = {}
+    stage5_used_count_by_family = {}
+    stage5_shadow_used_count_by_family = {}
+    stage5_accepted_count_by_family = {}
+    stage5_rejected_count_by_family = {}
     semantic_status_distribution = {}
     upright_semantic_status_distribution = {}
     old_rule_pass_distribution = {}
@@ -1055,12 +1153,47 @@ def summarize_open6dor_agent_records(records):
     target_axis_distribution = {}
     cosine_values = []
     for record in agent_records:
+        policy = str(record.get("agent_policy") or "unknown")
+        policy_distribution[policy] = policy_distribution.get(policy, 0) + 1
+        decision = str(record.get("agent_decision") or "none")
+        selected_execution_mode = str(record.get("agent_selected_execution_mode") or "none")
+        decision_distribution_by_policy.setdefault(policy, {})
+        decision_distribution_by_policy[policy][decision] = decision_distribution_by_policy[policy].get(decision, 0) + 1
+        execution_mode_distribution_by_policy.setdefault(policy, {})
+        execution_mode_distribution_by_policy[policy][selected_execution_mode] = execution_mode_distribution_by_policy[policy].get(selected_execution_mode, 0) + 1
+        if record.get("agent_used_stage5"):
+            used_stage5_count_by_policy[policy] = used_stage5_count_by_policy.get(policy, 0) + 1
+        if record.get("agent_fallback_to_baseline"):
+            fallback_count_by_policy[policy] = fallback_count_by_policy.get(policy, 0) + 1
+        if record.get("agent_shadow_used"):
+            shadow_used_count_by_policy[policy] = shadow_used_count_by_policy.get(policy, 0) + 1
+        if str(record.get("agent_verification_status") or "") == "rejected":
+            rejected_count_by_policy[policy] = rejected_count_by_policy.get(policy, 0) + 1
+        if decision == "use_stage5_conditional_verify":
+            conditional_verify_count_by_policy[policy] = conditional_verify_count_by_policy.get(policy, 0) + 1
+        agent_signals = record.get("agent_signals") or {}
+        block_reason = str(agent_signals.get("rule_v3_block_reason") or "none")
+        rule_v3_block_reason_distribution[block_reason] = rule_v3_block_reason_distribution.get(block_reason, 0) + 1
         mode = str(record.get("stage5_mode") or "none")
         mode_distribution[mode] = mode_distribution.get(mode, 0) + 1
         family = str(record.get("stage5_checkpoint_family") or "none")
         family_distribution[family] = family_distribution.get(family, 0) + 1
         source = str(record.get("stage5_checkpoint_source") or "none")
         source_distribution[source] = source_distribution.get(source, 0) + 1
+        family_shadow_only = bool(record.get("stage5_family_shadow_only"))
+        family_checkpoint_available = bool(record.get("stage5_family_checkpoint_available"))
+        checkpoint_available_by_family.setdefault(family, {"available": 0, "missing": 0})
+        checkpoint_available_by_family[family]["available" if family_checkpoint_available else "missing"] += 1
+        stage5_run_count_by_family[family] = stage5_run_count_by_family.get(family, 0) + 1
+        if record.get("agent_used_stage5"):
+            stage5_used_count_by_family[family] = stage5_used_count_by_family.get(family, 0) + 1
+        if record.get("agent_shadow_used"):
+            stage5_shadow_used_count_by_family[family] = stage5_shadow_used_count_by_family.get(family, 0) + 1
+        verification_status = str(record.get("agent_verification_status") or "")
+        if verification_status == "accepted":
+            stage5_accepted_count_by_family[family] = stage5_accepted_count_by_family.get(family, 0) + 1
+        if verification_status == "rejected":
+            stage5_rejected_count_by_family[family] = stage5_rejected_count_by_family.get(family, 0) + 1
         diagnostics = record.get("stage5_orientation_diagnostics") or {}
         semantic_status = str(diagnostics.get("semantic_status") or "none")
         semantic_status_distribution[semantic_status] = semantic_status_distribution.get(semantic_status, 0) + 1
@@ -1084,8 +1217,15 @@ def summarize_open6dor_agent_records(records):
             except (TypeError, ValueError):
                 pass
     summary["stage5_mode_distribution"] = mode_distribution
+    summary["task_family_distribution"] = family_distribution
     summary["stage5_checkpoint_family_distribution"] = family_distribution
     summary["stage5_checkpoint_source_distribution"] = source_distribution
+    summary["checkpoint_available_by_family"] = checkpoint_available_by_family
+    summary["stage5_run_count_by_family"] = stage5_run_count_by_family
+    summary["stage5_used_count_by_family"] = stage5_used_count_by_family
+    summary["stage5_shadow_used_count_by_family"] = stage5_shadow_used_count_by_family
+    summary["stage5_accepted_count_by_family"] = stage5_accepted_count_by_family
+    summary["stage5_rejected_count_by_family"] = stage5_rejected_count_by_family
     summary["stage5_semantic_status_distribution"] = semantic_status_distribution
     summary["stage5_upright_semantic_status_distribution"] = upright_semantic_status_distribution
     summary["stage5_old_rule_pass_distribution"] = old_rule_pass_distribution
@@ -1093,8 +1233,35 @@ def summarize_open6dor_agent_records(records):
     summary["stage5_verifier_rule_version_distribution"] = verifier_rule_version_distribution
     summary["stage5_verifier_decision_reason_distribution"] = verifier_decision_reason_distribution
     summary["stage5_target_axis_distribution"] = target_axis_distribution
+    summary["agent_policy_distribution"] = policy_distribution
+    summary["decision_distribution_by_policy"] = decision_distribution_by_policy
+    summary["selected_execution_mode_distribution_by_policy"] = execution_mode_distribution_by_policy
+    summary["used_stage5_count_by_policy"] = used_stage5_count_by_policy
+    summary["fallback_count_by_policy"] = fallback_count_by_policy
+    summary["shadow_used_count_by_policy"] = shadow_used_count_by_policy
+    summary["rejected_count_by_policy"] = rejected_count_by_policy
+    summary["conditional_verify_count_by_policy"] = conditional_verify_count_by_policy
+    summary["rule_v3_fallback_override_count"] = sum(
+        1 for record in agent_records if (record.get("agent_signals") or {}).get("rule_v3_allowed_by_fallback_override")
+    )
+    summary["rule_v3_block_reason_distribution"] = rule_v3_block_reason_distribution
     summary["reasoning_json_repaired_count"] = sum(1 for record in agent_records if record.get("reasoning_json_repaired"))
     summary["reasoning_json_degraded_count"] = sum(1 for record in agent_records if record.get("reasoning_json_degraded"))
+    summary["unknown_family_count"] = family_distribution.get(STAGE5_TASK_FAMILY_UNKNOWN, 0)
+    summary["shadow_only_family_count"] = sum(1 for record in agent_records if record.get("stage5_family_shadow_only"))
+    summary["part_axis_left_right_count"] = family_distribution.get(STAGE5_TASK_FAMILY_PART_AXIS, 0)
+    summary["part_axis_left_right_shadow_only_count"] = sum(
+        1
+        for record in agent_records
+        if str(record.get("stage5_checkpoint_family") or "") == STAGE5_TASK_FAMILY_PART_AXIS
+        and record.get("stage5_family_shadow_only")
+    )
+    summary["part_axis_left_right_used_count"] = sum(
+        1
+        for record in agent_records
+        if str(record.get("stage5_checkpoint_family") or "") == STAGE5_TASK_FAMILY_PART_AXIS
+        and record.get("agent_used_stage5")
+    )
     if cosine_values:
         summary["stage5_cosine_to_target_axis_mean"] = round(sum(cosine_values) / len(cosine_values), 6)
     summary["stage5_applied_count"] = sum(1 for record in agent_records if record.get("stage5_applied"))
@@ -1107,6 +1274,8 @@ def _attach_stage5_route_metadata(prediction, route):
     payload["checkpoint_family"] = route.get("task_family")
     payload["checkpoint_source"] = route.get("checkpoint_source")
     payload["checkpoint_route_reason"] = route.get("route_reason")
+    payload["family_shadow_only"] = bool(route.get("family_shadow_only"))
+    payload["family_checkpoint_available"] = bool(route.get("family_checkpoint_available"))
     payload["checkpoint_route_signals"] = route.get("signals", {})
     if route.get("checkpoint_path") and not payload.get("checkpoint_path"):
         payload["checkpoint_path"] = route.get("checkpoint_path")
@@ -1150,6 +1319,8 @@ def process_dataset(task_dir):
         "checkpoint_path": None,
         "checkpoint_source": "none",
         "route_reason": "stage5_disabled",
+        "family_shadow_only": False,
+        "family_checkpoint_available": False,
         "signals": {},
     }
     stage5_fallback_scene_graph_used = False
@@ -1173,6 +1344,7 @@ def process_dataset(task_dir):
     agent_decision = decide_open6dor_agent_action(
         stage5_enabled=False,
         orientation_mode="",
+        agent_policy=AGENT_OPTIONS.get("policy", "rule_v2"),
         stage5_gate_reason="stage5_disabled",
         fallback_required=False,
         parser_confidence=None,
@@ -1624,9 +1796,18 @@ def process_dataset(task_dir):
                         "mode": stage5_mode,
                         "reason": f"{execution_band}_mode",
                     }
+                    stage5_checkpoint_route = resolve_open6dor_stage5_checkpoint_route(
+                        stage5_mode,
+                        parser_confidence=(parsed_info or {}).get("parser_confidence"),
+                        stage4_cache_available=bool(stage4_signals.get("stage4_cache_available")),
+                        object_score=stage4_signals.get("object_score"),
+                        part_score=stage4_signals.get("part_score"),
+                        fallback_required=bool(object_context.get("fallback_required")),
+                    )
                     agent_decision = decide_open6dor_agent_action(
                         stage5_enabled=bool(STAGE5_OPTIONS.get("enabled")),
                         orientation_mode=stage5_mode,
+                        agent_policy=AGENT_OPTIONS.get("policy", "rule_v2"),
                         stage5_gate_reason=stage5_gate.get("reason", ""),
                         fallback_required=bool(object_context.get("fallback_required")),
                         parser_confidence=(parsed_info or {}).get("parser_confidence"),
@@ -1636,25 +1817,33 @@ def process_dataset(task_dir):
                         part_ratio=stage4_signals.get("part_ratio"),
                         stage5_fallback_scene_graph_used=stage5_fallback_scene_graph_used,
                         shadow_enabled=bool(AGENT_OPTIONS.get("shadow_eval")),
+                        task_family=stage5_checkpoint_route.get("task_family"),
+                        checkpoint_source=stage5_checkpoint_route.get("checkpoint_source"),
+                        checkpoint_available=bool(
+                            stage5_checkpoint_route.get("family_checkpoint_available")
+                            or stage5_checkpoint_route.get("checkpoint_path")
+                        ),
+                        checkpoint_route_reason=stage5_checkpoint_route.get("route_reason"),
+                        checkpoint_route_policy=stage5_checkpoint_route.get("routing_policy"),
                     )
                     print(
                         f"[open6dor] agent decision={agent_decision.get('decision')} "
                         f"reason={agent_decision.get('decision_reason')}"
-                    )
-
-                    stage5_checkpoint_route = resolve_open6dor_stage5_checkpoint_route(
-                        stage5_mode,
-                        parser_confidence=(parsed_info or {}).get("parser_confidence"),
-                        stage4_cache_available=bool(stage4_signals.get("stage4_cache_available")),
-                        object_score=stage4_signals.get("object_score"),
-                        part_score=stage4_signals.get("part_score"),
-                        fallback_required=bool(object_context.get("fallback_required")),
                     )
                     agent_decision["agent_signals"] = {
                         **(agent_decision.get("agent_signals") or {}),
                         "stage5_task_family": stage5_checkpoint_route.get("task_family"),
                         "stage5_checkpoint_route_reason": stage5_checkpoint_route.get("route_reason"),
                         "stage5_checkpoint_source": stage5_checkpoint_route.get("checkpoint_source"),
+                        "checkpoint_source": stage5_checkpoint_route.get("checkpoint_source"),
+                        "checkpoint_available": bool(
+                            stage5_checkpoint_route.get("family_checkpoint_available")
+                            or stage5_checkpoint_route.get("checkpoint_path")
+                        ),
+                        "checkpoint_route_reason": stage5_checkpoint_route.get("route_reason"),
+                        "checkpoint_route_policy": stage5_checkpoint_route.get("routing_policy"),
+                        "stage5_family_shadow_only": bool(stage5_checkpoint_route.get("family_shadow_only")),
+                        "stage5_family_checkpoint_available": bool(stage5_checkpoint_route.get("family_checkpoint_available")),
                     }
 
                     should_run_stage5 = agent_decision.get("decision") in {
@@ -1715,6 +1904,11 @@ def process_dataset(task_dir):
                         f"[open6dor] agent verify={agent_verification.get('verification_status')} "
                         f"reason={agent_verification.get('verification_reason')}"
                     )
+                    agent_decision["agent_signals"] = {
+                        **(agent_decision.get("agent_signals") or {}),
+                        "verifier_rule_version": agent_verification.get("verifier_rule_version", ""),
+                        "verifier_decision_reason": agent_verification.get("verifier_decision_reason", ""),
+                    }
 
                     if agent_verification.get("shadow_used"):
                         stage5_shadow_prediction = stage5_prediction
@@ -1858,6 +2052,15 @@ def process_dataset(task_dir):
             "stage5_checkpoint_route_reason": (stage5_prediction or {}).get("checkpoint_route_reason", stage5_checkpoint_route.get("route_reason")),
             "stage5_checkpoint_route_policy": (stage5_prediction or {}).get("checkpoint_route_policy", stage5_checkpoint_route.get("routing_policy")),
             "stage5_checkpoint_route_signals": (stage5_prediction or {}).get("checkpoint_route_signals", stage5_checkpoint_route.get("signals", {})),
+            "stage5_family_shadow_only": bool(
+                (stage5_prediction or {}).get("family_shadow_only", stage5_checkpoint_route.get("family_shadow_only"))
+            ),
+            "stage5_family_checkpoint_available": bool(
+                (stage5_prediction or {}).get(
+                    "family_checkpoint_available",
+                    stage5_checkpoint_route.get("family_checkpoint_available"),
+                )
+            ),
             "stage5_mode": stage5_gate.get("mode"),
             "stage5_skip_reason": (stage5_prediction or {}).get("skip_reason", ""),
             "stage5_raw_direction_attributes": (stage5_prediction or {}).get("raw_direction_attributes", []),
@@ -1927,6 +2130,15 @@ def process_dataset(task_dir):
             "stage5_checkpoint_route_reason": (stage5_prediction or {}).get("checkpoint_route_reason", stage5_checkpoint_route.get("route_reason")),
             "stage5_checkpoint_route_policy": (stage5_prediction or {}).get("checkpoint_route_policy", stage5_checkpoint_route.get("routing_policy")),
             "stage5_checkpoint_route_signals": (stage5_prediction or {}).get("checkpoint_route_signals", stage5_checkpoint_route.get("signals", {})),
+            "stage5_family_shadow_only": bool(
+                (stage5_prediction or {}).get("family_shadow_only", stage5_checkpoint_route.get("family_shadow_only"))
+            ),
+            "stage5_family_checkpoint_available": bool(
+                (stage5_prediction or {}).get(
+                    "family_checkpoint_available",
+                    stage5_checkpoint_route.get("family_checkpoint_available"),
+                )
+            ),
             "stage5_mode": stage5_gate.get("mode"),
             "stage5_skip_reason": (stage5_prediction or {}).get("skip_reason", ""),
             "stage5_raw_direction_attributes": (stage5_prediction or {}).get("raw_direction_attributes", []),
@@ -2007,6 +2219,8 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
                 "stage5_checkpoint_route_reason": record.get("stage5_checkpoint_route_reason"),
                 "stage5_checkpoint_route_policy": record.get("stage5_checkpoint_route_policy"),
                 "stage5_checkpoint_route_signals": _json_dumps_safe(record.get("stage5_checkpoint_route_signals", {})),
+                "stage5_family_shadow_only": record.get("stage5_family_shadow_only"),
+                "stage5_family_checkpoint_available": record.get("stage5_family_checkpoint_available"),
                 "stage5_mode": record.get("stage5_mode"),
                 "stage5_skip_reason": record.get("stage5_skip_reason"),
                 "stage5_raw_direction_attributes": _json_dumps_safe(record.get("stage5_raw_direction_attributes", [])),
@@ -2097,6 +2311,8 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
             "stage5_checkpoint_route_reason",
             "stage5_checkpoint_route_policy",
             "stage5_checkpoint_route_signals",
+            "stage5_family_shadow_only",
+            "stage5_family_checkpoint_available",
             "stage5_mode",
             "stage5_skip_reason",
             "stage5_raw_direction_attributes",
@@ -2840,6 +3056,7 @@ if __name__ == "__main__":
     plug_expert_checkpoint = _optional_path_string(args.stage5_plug_expert_checkpoint)
     if not plug_expert_checkpoint:
         plug_expert_checkpoint = _optional_path_string(runtime_paths.stage5_open6dor_plug_checkpoint_path())
+    part_axis_expert_checkpoint = _optional_path_string(args.stage5_part_axis_expert_checkpoint)
     STAGE5_OPTIONS.clear()
     STAGE5_OPTIONS.update(
         {
@@ -2853,6 +3070,7 @@ if __name__ == "__main__":
                 STAGE5_TASK_FAMILY_UPRIGHT: upright_expert_checkpoint,
                 STAGE5_TASK_FAMILY_FLAT: flat_expert_checkpoint,
                 STAGE5_TASK_FAMILY_PLUG: plug_expert_checkpoint,
+                STAGE5_TASK_FAMILY_PART_AXIS: part_axis_expert_checkpoint,
             },
         }
     )
