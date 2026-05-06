@@ -517,6 +517,19 @@ def summarize_stage_timings(records):
     return {field: summarize_numeric_field(records, field) for field in stage_fields}
 
 
+def summarize_reasoning_json_records(records):
+    summary = {
+        "repaired_count": 0,
+        "degraded_count": 0,
+    }
+    for record in records:
+        if record.get("reasoning_json_repaired"):
+            summary["repaired_count"] += 1
+        if record.get("reasoning_json_degraded"):
+            summary["degraded_count"] += 1
+    return summary
+
+
 def save_progress(output_dir, run_id, dataset_root, dataset_paths, run_context):
     normalized_records = latest_records(RUN_RECORDS)
     success_records = [item for item in normalized_records if item.get("status") == "success"]
@@ -540,6 +553,7 @@ def save_progress(output_dir, run_id, dataset_root, dataset_paths, run_context):
         "min_success_sec": min((item.get("elapsed_sec") for item in success_records), default=None),
         "max_success_sec": max((item.get("elapsed_sec") for item in success_records), default=None),
         "stage_timing_summary": summarize_stage_timings(normalized_records),
+        "reasoning_json_summary": summarize_reasoning_json_records(normalized_records),
         "agent_summary": summarize_open6dor_agent_records(normalized_records),
         "slowest_tasks": [
             {
@@ -1079,6 +1093,8 @@ def summarize_open6dor_agent_records(records):
     summary["stage5_verifier_rule_version_distribution"] = verifier_rule_version_distribution
     summary["stage5_verifier_decision_reason_distribution"] = verifier_decision_reason_distribution
     summary["stage5_target_axis_distribution"] = target_axis_distribution
+    summary["reasoning_json_repaired_count"] = sum(1 for record in agent_records if record.get("reasoning_json_repaired"))
+    summary["reasoning_json_degraded_count"] = sum(1 for record in agent_records if record.get("reasoning_json_degraded"))
     if cosine_values:
         summary["stage5_cosine_to_target_axis_mean"] = round(sum(cosine_values) / len(cosine_values), 6)
     summary["stage5_applied_count"] = sum(1 for record in agent_records if record.get("stage5_applied"))
@@ -1125,6 +1141,7 @@ def process_dataset(task_dir):
     failed_stage = None
     perception_cache_hit = False
     pipeline_mode = "legacy"
+    reasoning_response = {}
     stage5_prediction = None
     stage5_shadow_prediction = None
     stage5_checkpoint_route = {
@@ -1281,6 +1298,7 @@ def process_dataset(task_dir):
                         prompt,
                         picked_object_info,
                         other_objects_info,
+                        fallback_position=picked_object_dict["center"],
                     ),
                 )
                 target_position = response["target_position"]
@@ -1288,7 +1306,15 @@ def process_dataset(task_dir):
             else:
                 stage_times["reasoning_sec"] = 0.0
                 target_position = picked_object_dict["center"]
-            return parsed_info, picked_object_dict, target_position
+                response = {
+                    "calculation_process": "",
+                    "target_position": target_position,
+                    "json_repair_applied": False,
+                    "json_repair_failed": False,
+                    "degraded_position_source": "",
+                    "degraded_reason": "",
+                }
+            return parsed_info, picked_object_dict, target_position, response
 
         parsed_info = None
         picked_object_dict = None
@@ -1383,6 +1409,7 @@ def process_dataset(task_dir):
                             "relation_type": object_context.get("relation_type", "none"),
                         },
                         object_context.get("orientation_template_hints", {}),
+                        fallback_position=(picked_object_dict or {}).get("center"),
                     ),
                 )
                 parsed_info = {
@@ -1392,16 +1419,26 @@ def process_dataset(task_dir):
                     "target_orientation": joint_info.get("target_orientation", {}),
                 }
                 target_position = picked_object_dict["center"] if "rot" in task_dir else joint_info["target_position"]
+                reasoning_response = {
+                    "calculation_process": joint_info.get("calculation_process", ""),
+                    "target_position": target_position,
+                    "json_repair_applied": bool(joint_info.get("json_repair_applied")),
+                    "json_repair_failed": bool(joint_info.get("json_repair_failed")),
+                    "degraded_position_source": joint_info.get("degraded_position_source", ""),
+                    "degraded_reason": joint_info.get("degraded_reason", ""),
+                }
+                if joint_info.get("raw_reasoning_output"):
+                    reasoning_response["raw_reasoning_output"] = joint_info.get("raw_reasoning_output")
                 stage_times["parse_sec"] = 0.0
                 stage_times["reasoning_sec"] = 0.0
             except Exception as joint_exc:
                 print(f"[open6dor] joint pipeline failed, falling back to legacy path: {joint_exc}")
                 pipeline_mode = "legacy_fallback"
                 stage_times.pop("qwen_joint_sec", None)
-                parsed_info, picked_object_dict, target_position = run_legacy_pipeline()
+                parsed_info, picked_object_dict, target_position, reasoning_response = run_legacy_pipeline()
         else:
             pipeline_mode = "legacy"
-            parsed_info, picked_object_dict, target_position = run_legacy_pipeline()
+            parsed_info, picked_object_dict, target_position, reasoning_response = run_legacy_pipeline()
 
         parsed_info.setdefault("orientation_mode", infer_open6dor_stage5_mode(task_dir, task_info=task_info, parsed_info=parsed_info))
         init_position = picked_object_dict["center"]
@@ -1763,11 +1800,18 @@ def process_dataset(task_dir):
             "init_position": init_position,
             "target_position": target_position,
             "delta_position": [round(target_position[i] - init_position[i], 2) for i in range(3)],
+            "calculation_process": reasoning_response.get("calculation_process", ""),
+            "json_repair_applied": bool(reasoning_response.get("json_repair_applied")),
+            "json_repair_failed": bool(reasoning_response.get("json_repair_failed")),
+            "degraded_position_source": reasoning_response.get("degraded_position_source", ""),
+            "degraded_reason": reasoning_response.get("degraded_reason", ""),
             "init_orientation": init_orientation,
             "target_orientation": target_orientation,
             "transform_matrix": transform_matrix,
             "stage5_head": stage5_prediction,
         }
+        if reasoning_response.get("raw_reasoning_output"):
+            result["raw_reasoning_output"] = reasoning_response.get("raw_reasoning_output")
         with open(os.path.join(output_path, "result.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=4, ensure_ascii=False)
         print("Successfully saved result for", output_path)
@@ -1782,6 +1826,11 @@ def process_dataset(task_dir):
             "total_sec": elapsed,
             "perception_cache_hit": perception_cache_hit,
             "pipeline_mode": pipeline_mode,
+            "calculation_process": reasoning_response.get("calculation_process", ""),
+            "reasoning_json_repaired": bool(reasoning_response.get("json_repair_applied")),
+            "reasoning_json_degraded": bool(reasoning_response.get("json_repair_failed")),
+            "degraded_position_source": reasoning_response.get("degraded_position_source", ""),
+            "degraded_reason": reasoning_response.get("degraded_reason", ""),
             "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
             "agent_controller": agent_decision.get("controller"),
             "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
@@ -1927,6 +1976,11 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
                 "task_dir": record.get("task_dir"),
                 "status": record.get("status"),
                 "pipeline_mode": record.get("pipeline_mode"),
+                "calculation_process": record.get("calculation_process"),
+                "reasoning_json_repaired": record.get("reasoning_json_repaired"),
+                "reasoning_json_degraded": record.get("reasoning_json_degraded"),
+                "degraded_position_source": record.get("degraded_position_source"),
+                "degraded_reason": record.get("degraded_reason"),
                 "failed_stage": record.get("failed_stage"),
                 "result_file": record.get("result_file"),
                 "stage5_enabled": record.get("stage5_enabled"),
@@ -1994,6 +2048,7 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
         "applied_count": sum(1 for item in export_records if item.get("stage5_applied")),
         "skipped_count": sum(1 for item in export_records if item.get("stage5_skip_reason")),
         "error_count": sum(1 for item in export_records if item.get("status") == "error"),
+        "reasoning_json_summary": summarize_reasoning_json_records(records),
         "agent_summary": summarize_open6dor_agent_records(records),
         "records": export_records,
     }
@@ -2011,6 +2066,11 @@ def write_stage5_integration_outputs(output_dir, run_id, summary, run_context):
             "task_dir",
             "status",
             "pipeline_mode",
+            "calculation_process",
+            "reasoning_json_repaired",
+            "reasoning_json_degraded",
+            "degraded_position_source",
+            "degraded_reason",
             "failed_stage",
             "result_file",
             "stage5_enabled",
@@ -2657,7 +2717,14 @@ if __name__ == "__main__":
 
         qwen_model, processor = load_qwen_model()
 
-        def open6dor_joint_reasoning_fn(img, command, scene_graph, object_set_hint, orientation_template_hints):
+        def open6dor_joint_reasoning_fn(
+            img,
+            command,
+            scene_graph,
+            object_set_hint,
+            orientation_template_hints,
+            fallback_position=None,
+        ):
             return qwen_open6dor_joint_reasoning(
                 qwen_model,
                 processor,
@@ -2666,13 +2733,22 @@ if __name__ == "__main__":
                 scene_graph,
                 object_set_hint=object_set_hint,
                 orientation_template_hints=orientation_template_hints,
+                fallback_position=fallback_position,
             )
 
         def open6dor_parsing_fn(command, img):
             return qwen_open6dor_parsing(qwen_model, processor, img, command)
 
-        def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info):
-            return qwen_open6dor_spatial_reasoning(qwen_model, processor, img, command, picked_info, other_info)
+        def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info, fallback_position=None):
+            return qwen_open6dor_spatial_reasoning(
+                qwen_model,
+                processor,
+                img,
+                command,
+                picked_info,
+                other_info,
+                fallback_position=fallback_position,
+            )
 
         def open6dor_stage2_fast_parser_fn(command, img, task_info):
             return qwen_stage2_fast_open6dor_parser(qwen_model, processor, img, command, task_info)
@@ -2686,7 +2762,7 @@ if __name__ == "__main__":
         def open6dor_parsing_fn(command, img):
             return chatgpt_open6dor_parsing(command, img)
 
-        def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info):
+        def open6dor_spatial_reasoning_fn(img, command, picked_info, other_info, fallback_position=None):
             return chatgpt_open6dor_spatial_reasoning(img, command, picked_info, other_info)
 
         def open6dor_stage2_fast_parser_fn(command, img, task_info):

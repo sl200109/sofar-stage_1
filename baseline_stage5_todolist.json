@@ -429,6 +429,13 @@
                       "notes":  "已从 subset400 中抽取 120 条低成本主结果子集：upright_vertical 40, flat_upside_down_lying_flat 40, plug_right 40；显式排除 cap/clip/sideways 和 subset400 首轮 error 样本。"
                   },
                   {
+                      "id":  "stage5_open6dor_same_subset_ablation_runner",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Open6DOR same-subset official-evaluator ablation runner",
+                      "notes":  "已新增 analysis/run_open6dor_subset_ablation.py 与 tests/test_open6dor_ablation_runner.py；支持 dry-run/eval-only/skip-existing/max-tasks 切片、method 独立输出目录、subset mirror evaluator、ablation_summary 与 error_breakdown 汇总。"
+                  },
+                  {
                       "id":  "stage5_open6dor_paper_core_120_formal_eval",
                       "owner":  "server",
                       "status":  "todo",

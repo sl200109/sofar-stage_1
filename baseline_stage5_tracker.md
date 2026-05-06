@@ -732,3 +732,35 @@
   - 下一步仍按低成本顺序执行：
     - 先跑 `error_replay_50`
     - 再跑 `paper_core_120`
+
+## 30. 2026-05-06 same-subset evaluator ablation runner 已在本地补齐
+- 本轮本地新增文件：
+  - `sofar/analysis/run_open6dor_subset_ablation.py`
+  - `tests/test_open6dor_ablation_runner.py`
+- 已实现内容：
+  - 在同一个 `task_list` 上按 method 生成独立输出目录：
+    - `baseline_only`
+    - `pscr_rule_v2_safe`
+    - `pscr_rule_v3_verified`（缺实现时仅预留并跳过）
+    - `pscr_shadow`
+    - `pscr_direct_no_verify`（缺安全开关时仅预留并跳过）
+  - 支持：
+    - `--dry-run`
+    - `--eval-only`
+    - `--skip-existing`
+    - `--max-tasks`
+    - `task_list first-N` 切片并写入独立临时清单
+  - 不改 `eval_open6dor.py` 公式；通过 subset mirror dataset root 把每个 method 的 `result.json` 接回官方 evaluator 口径
+  - 汇总输出：
+    - `ablation_summary.json`
+    - `ablation_summary.csv`
+    - `error_breakdown.csv`
+    - `commands_dry_run.txt / commands_executed.txt`
+- 本地验证状态：
+  - `python -m py_compile sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_ablation_runner.py`
+  - `python -m unittest tests.test_open6dor_ablation_runner`
+  - 两项均已通过
+- 当前结论：
+  - 这一步只补 evaluator 闭环与 same-subset ablation runner
+  - 不改 Stage5 policy / agent policy / evaluator 公式 / 训练代码
+  - 默认交接与 smoke 命令均限制为 `--max-tasks 20` 或 `50`，不在本地阶段直接跑完整 `400-case`

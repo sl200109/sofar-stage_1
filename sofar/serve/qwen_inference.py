@@ -1,7 +1,14 @@
 import json
-import re
 import os
+import re
 from qwen_vl_utils import process_vision_info
+from serve.open6dor_json_utils import (
+    _normalize_numeric_triplet,
+    _truncate_open6dor_raw_output,
+    _validate_open6dor_target_position,
+    normalize_open6dor_joint_result,
+    normalize_open6dor_reasoning_result,
+)
 from serve.system_prompts import (
     open6dor_joint_reasoning_prompt,
     open6dor_parsing_prompt,
@@ -164,6 +171,39 @@ def _load_open6dor_reasoning_json(output_text):
     raise json.JSONDecodeError("No valid Open6DOR reasoning JSON found in model output", cleaned, 0)
 
 
+def _load_strict_open6dor_reasoning_json(output_text):
+    cleaned = output_text.replace("```json", "").replace("```", "").strip()
+    cleaned = _repair_invalid_backslash_escape(cleaned)
+    obj = json.loads(cleaned)
+    if isinstance(obj, dict) and "target_position" in obj:
+        return obj
+    if isinstance(obj, list) and len(obj) == 3:
+        return {
+            "calculation_process": "",
+            "target_position": obj,
+        }
+    raise json.JSONDecodeError("Strict Open6DOR reasoning JSON schema mismatch", cleaned, 0)
+
+
+def _load_strict_open6dor_joint_json(output_text):
+    cleaned = output_text.replace("```json", "").replace("```", "").strip()
+    cleaned = _repair_invalid_backslash_escape(cleaned)
+    obj = json.loads(cleaned)
+    if not isinstance(obj, dict):
+        raise json.JSONDecodeError("Strict Open6DOR joint JSON schema mismatch", cleaned, 0)
+    required_keys = {
+        "picked_object",
+        "related_objects",
+        "direction_attributes",
+        "target_orientation",
+        "target_position",
+        "calculation_process",
+    }
+    if not required_keys.issubset(set(obj.keys())):
+        raise json.JSONDecodeError("Strict Open6DOR joint JSON missing required keys", cleaned, 0)
+    return obj
+
+
 def _load_manip_reasoning_json(output_text):
     cleaned = output_text.replace("```json", "").replace("```", "").strip()
     cleaned = _repair_invalid_backslash_escape(cleaned)
@@ -299,17 +339,6 @@ def _dedupe_object_names(values):
         deduped.append(normalized)
         seen.add(canonical)
     return deduped
-
-
-def _normalize_numeric_triplet(value):
-    if isinstance(value, (list, tuple)) and len(value) == 3:
-        try:
-            return [float(item) for item in value]
-        except Exception:
-            return None
-    if isinstance(value, str):
-        return _parse_numeric_triplet(value)
-    return None
 
 
 def _normalize_confidence(value, default=0.0):
@@ -608,14 +637,7 @@ def _normalize_open6dor_joint_json(raw_info):
     info["related_objects"] = _ensure_string_list(info.get("related_objects", []))
     info["direction_attributes"] = _ensure_string_list(info.get("direction_attributes", []))
     info["target_orientation"] = _normalize_target_orientation(info.get("target_orientation", {}))
-    if not info["direction_attributes"] and info["target_orientation"]:
-        info["direction_attributes"] = list(info["target_orientation"].keys())
-    normalized_position = _normalize_numeric_triplet(info.get("target_position"))
-    if normalized_position is None:
-        raise ValueError(f"Missing valid target_position in joint result: {raw_info}")
-    info["target_position"] = normalized_position
-    info["calculation_process"] = str(info.get("calculation_process", "")).strip()
-    return info
+    return normalize_open6dor_joint_result(info)
 
 
 def _load_open6dor_joint_json(output_text):
@@ -731,7 +753,15 @@ def stage2_part_parser(qwen_model, processor, image_path, instruction):
     return normalized
 
 
-def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, picked_object_info, other_objects_info):
+def open6dor_spatial_reasoning(
+    qwen_model,
+    processor,
+    image_path,
+    instruction,
+    picked_object_info,
+    other_objects_info,
+    fallback_position=None,
+):
     def build_messages(strict_json=False):
         json_instruction = (
             'Return JSON only in the format '
@@ -783,12 +813,31 @@ def open6dor_spatial_reasoning(qwen_model, processor, image_path, instruction, p
         print(output_text)
         try:
             info = _load_open6dor_reasoning_json(output_text)
+            try:
+                _load_strict_open6dor_joint_json(output_text)
+                repair_applied = False
+            except json.JSONDecodeError:
+                repair_applied = True
+            info = normalize_open6dor_reasoning_result(
+                info,
+                raw_output_text=output_text,
+                json_repair_applied=repair_applied,
+            )
             print(info)
             return info
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, ValueError) as exc:
             last_error = exc
             if strict_json:
-                raise
+                degraded = normalize_open6dor_reasoning_result(
+                    None,
+                    fallback_position=fallback_position,
+                    raw_output_text=output_text,
+                    json_repair_failed=True,
+                    degraded_reason=exc,
+                )
+                print("[open6dor] reasoning JSON parse failed after strict retry, using degraded fallback result.")
+                print(degraded)
+                return degraded
             print("[open6dor] reasoning JSON parse failed, retrying with stricter prompt...")
 
     raise last_error
@@ -802,6 +851,7 @@ def open6dor_joint_reasoning(
     lightweight_scene_graph,
     object_set_hint=None,
     orientation_template_hints=None,
+    fallback_position=None,
 ):
     object_set_hint = object_set_hint or {}
     orientation_template_hints = orientation_template_hints or {}
@@ -856,6 +906,16 @@ def open6dor_joint_reasoning(
         print(output_text)
         try:
             info = _load_open6dor_joint_json(output_text)
+            try:
+                _load_strict_open6dor_reasoning_json(output_text)
+                repair_applied = False
+            except json.JSONDecodeError:
+                repair_applied = True
+            info = normalize_open6dor_joint_result(
+                info,
+                raw_output_text=output_text,
+                json_repair_applied=repair_applied,
+            )
             if not info["picked_object"]:
                 info["picked_object"] = str(object_set_hint.get("picked_object", "")).strip()
             if not info["related_objects"]:
@@ -867,7 +927,17 @@ def open6dor_joint_reasoning(
         except Exception as exc:
             last_error = exc
             if strict_json:
-                raise
+                degraded = normalize_open6dor_joint_result(
+                    None,
+                    fallback_position=fallback_position,
+                    raw_output_text=output_text,
+                    json_repair_failed=True,
+                    degraded_reason=exc,
+                    fallback_picked_object=(object_set_hint or {}).get("picked_object", ""),
+                )
+                print("[open6dor] joint JSON parse failed after strict retry, using degraded fallback result.")
+                print(degraded)
+                return degraded
             print("[open6dor] joint JSON parse failed, retrying with stricter prompt...")
 
     raise last_error
