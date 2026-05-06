@@ -1,9 +1,17 @@
 {
-  "before": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_152132.json",
-  "after": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\sofar\\output\\stage5_open6dor_pipeline_records_20260429_154727.json",
+  "before_records": "output/stage5_open6dor_pipeline_records_20260429_152132.json",
+  "after_records": "output/stage5_open6dor_pipeline_records_20260429_154727.json",
   "dataset_root": "/data/coding/SoFar/datasets/open6dor_v2/open6dor_v2/task_refine_6dof",
-  "output_dir": "D:\\妗岄潰\\sofar瀹為獙鍚屾\\paper_results\\open6dor_short_experiments_20260429",
+  "subset400_manifest": "paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json",
+  "subset400_task_list": "paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json",
+  "subset400_summary": "paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json",
+  "error_replay_50_manifest": "paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400.json",
+  "error_replay_50_task_list": "paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_task_list.json",
+  "error_replay_50_summary": "paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_summary.json",
+  "paper_core_120_manifest": "paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42.json",
+  "paper_core_120_task_list": "paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json",
+  "paper_core_120_summary": "paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_summary.json",
   "seed": 42,
-  "subset_size": 400,
-  "subset_source_policy": "server-side from4389 task tree"
+  "paper_core_total": 120,
+  "policy": "Do not prioritize rerunning 400-case. Validate targeted fixes on error_replay_50 first, then run paper_core_120 for low-cost paper results."
 }

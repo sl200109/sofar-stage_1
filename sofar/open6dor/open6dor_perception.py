@@ -19,6 +19,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from serve import pointso as orientation
+from open6dor.eval_subset_sampling import classify_task_family as classify_eval_task_family
 from open6dor.utils import (
     build_orientation_template_hints,
     extract_open6dor_minimal_object_set,
@@ -79,6 +80,41 @@ STAGE5_TASK_FAMILY_UPRIGHT = "upright_vertical"
 STAGE5_TASK_FAMILY_FLAT = "flat_upside_down_lying_flat"
 STAGE5_TASK_FAMILY_PLUG = "plug_cap_sideways"
 STAGE5_TASK_FAMILY_UNKNOWN = "unknown"
+GENERIC_MODE_HINTS = {
+    "upright": ["top", "bottom", "handle", "opening"],
+    "upright_lens_forth": ["top", "bottom", "lens", "front"],
+    "upright_textual": ["top", "bottom", "front", "back"],
+    "watch_upright": ["bracelet", "bracelet end", "watch face", "dial"],
+    "tape_measure_upright": ["base", "bottom", "tape opening", "top"],
+    "upside_down": ["top", "bottom", "larger face", "back"],
+    "upside_down_textual": ["top", "bottom", "larger face", "back"],
+    "lying_flat": ["larger face", "front cover", "screen", "back"],
+    "lying_sideways": ["side", "spine", "clip side", "handle"],
+    "lower_rim": ["bottom rim", "base", "bottom"],
+    "plug_right": ["plug end", "silver plug end", "larger end"],
+    "handle_right": ["handle", "grip"],
+    "handle_left": ["handle", "grip"],
+    "handle_right_jaw_left": ["handle", "jaw"],
+    "blade_right": ["blade", "handle", "tip"],
+    "blades_right": ["blade", "handle", "tip"],
+    "bulb_right_handle_left": ["bulb", "handle"],
+    "prong_right": ["prong", "handle", "tip"],
+    "spout_right": ["spout", "handle", "opening"],
+    "ballpoint_right": ["tip", "pen tip", "cap"],
+    "clasp_right": ["clasp", "band"],
+    "cap_left_bottom_right": ["visor brim", "brim", "cap top"],
+    "cap_right_bottom_left": ["visor brim", "brim", "cap top"],
+    "cap_right": ["visor brim", "brim", "cap top"],
+    "cap_forth": ["visor brim", "brim", "cap top"],
+    "clip_sideways": ["clip side", "side", "spine"],
+    "sideways": ["side", "spine", "handle"],
+    "sideways_textual": ["side", "spine", "handle"],
+    "hat_sideways": ["brim", "side"],
+    "remote_control_forth": ["front", "buttons", "back"],
+    "multimeter_forth": ["screen", "back", "dial"],
+    "card_forth_textual": ["front", "back", "edge"],
+    "earpiece_far": ["earpiece", "front", "back"],
+}
 NAMED_PILOTS = {
     "open6dor10": ROOT_DIR / "open6dor" / "pilots" / "open6dor_pilot_10.json",
 }
@@ -143,17 +179,26 @@ def _safe_float(value):
 
 def infer_open6dor_stage5_task_family(orientation_mode):
     mode = _normalize_stage5_mode_label(orientation_mode)
-    if mode in {"upright", "upright_lens_forth", "vertical"}:
+    family = classify_eval_task_family(mode)
+    if family == "upright_vertical":
         return STAGE5_TASK_FAMILY_UPRIGHT
-    if mode in {"flat", "upside_down", "upside_down_textual", "lying_flat"}:
+    if family == "flat_upside_down_lying_flat" or mode == "flat":
         return STAGE5_TASK_FAMILY_FLAT
-    if (
-        mode.startswith("plug_")
-        or mode.startswith("cap_")
-        or mode in {"sideways", "sideways_textual", "clip_sideways", "lying_sideways"}
-    ):
+    if family in {"plug_right", "cap_clip_sideways"}:
         return STAGE5_TASK_FAMILY_PLUG
     return STAGE5_TASK_FAMILY_UNKNOWN
+
+
+def _generic_orientation_template_hints(object_name, orientation_mode):
+    mode = _normalize_stage5_mode_label(orientation_mode)
+    direction_attributes = list(GENERIC_MODE_HINTS.get(mode, []))
+    return {
+        "matched": bool(direction_attributes),
+        "object_name": normalize_object_name(object_name),
+        "direction_attributes": direction_attributes,
+        "description": f"generic_mode_hints:{mode}" if direction_attributes else "",
+        "source": "generic_mode_hints" if direction_attributes else "none",
+    }
 
 
 def resolve_open6dor_stage5_checkpoint_route(
@@ -816,15 +861,19 @@ def save_perception_cache(task_dir, cache_payload, mask):
 def build_joint_object_context(task_info, prompt):
     target_name = normalize_object_name(task_info.get("target_obj_name", ""))
     context = extract_open6dor_minimal_object_set(prompt, target_name)
+    orientation_mode = infer_open6dor_stage5_mode("", task_info=task_info, parsed_info={})
     template_hints = build_orientation_template_hints(context["picked_object"], ORIENTATION_TEMPLATES)
+    if not template_hints.get("matched"):
+        template_hints = _generic_orientation_template_hints(context["picked_object"], orientation_mode)
     context["direction_attributes"] = template_hints.get("direction_attributes", [])
     context["orientation_template_hints"] = template_hints
     if (
         "rot" in str(task_info.get("task_type", "")).lower()
         or "rotation" in prompt.lower()
         or "upright" in prompt.lower()
-    ) and not template_hints.get("matched"):
+    ) and not template_hints.get("direction_attributes"):
         context["fallback_required"] = True
+    context["orientation_mode"] = orientation_mode
     return context
 
 

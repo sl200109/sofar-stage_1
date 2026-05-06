@@ -1,43 +1,61 @@
-当前版本：2026-04-30
+当前版本：2026-05-06
 
 状态：
+- 已撤销本地 OOM 特化修改
+- 当前按 V100 环境继续评测
 - 不训练
-- 不改 verifier
-- 不跑 400-case evaluation
-- 只重跑 from4389 subset 生成
+- 不改 checkpoint
+- 不改 verifier 主逻辑
 
 文件夹：
 - `sofar/open6dor`
-- `sofar/tools`
+- `sofar/serve`
 - `tests`
 
 文件：
-- `baseline_stage5_tracker.md`
-- `baseline_stage5_todolist.json`
-- `当前代码地图与交接总表.md`
-- `交接操作.txt`
+- `sofar/open6dor/open6dor_perception.py`
+- `sofar/serve/qwen_inference.py`
+- `tests/test_qwen_open6dor_reasoning_json.py`
+- `tests/test_open6dor_runtime_agent_modes.py`
 
 服务器目标路径：
 - `sofar/open6dor/...` -> `/data/coding/SoFar/open6dor/...`
-- `sofar/tools/...` -> `/data/coding/SoFar/tools/...`
+- `sofar/serve/...` -> `/data/coding/SoFar/serve/...`
 - `tests/...` -> `/data/coding/SoFar/tests/...`
 
 服务器命令：
 ```bash
 cd /data/coding/SoFar
-python tools/generate_open6dor_eval_subset_400_from4389.py --dataset-root /data/coding/SoFar/datasets/open6dor_v2/open6dor_v2/task_refine_6dof --output-dir /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429 --seed 42 --subset-size 400
+python open6dor/open6dor_perception.py --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_task_list.json --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-expert-routing task_family --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative
+```
+
+```bash
+cd /data/coding/SoFar
+python open6dor/open6dor_perception.py --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-expert-routing task_family --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative
 ```
 
 预期输出：
-- `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json`
-- `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json`
-- `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json`
-- 只有 validation 通过时才允许存在：
-  - `paper_results/open6dor_short_experiments_20260429/open6dor_400_final_method_command.txt`
+- `output/open6dor_perception_summary_open6dor_error_replay_50_from_subset400_task_list_*.json`
+- `output/stage5_open6dor_pipeline_records_open6dor_error_replay_50_from_subset400_task_list_*.json`
+- `output/open6dor_perception_open6dor_error_replay_50_from_subset400_task_list_*.log`
+- `output/open6dor_perception_summary_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/stage5_open6dor_pipeline_records_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/open6dor_perception_open6dor_paper_core_120_seed42_task_list_*.log`
 
 失败时回传：
 - 终端完整报错
-- `paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_summary.json`
+- 最新：
+  - `output/open6dor_perception_summary_open6dor_error_replay_50_from_subset400_task_list_*.json`
+  - `output/stage5_open6dor_pipeline_records_open6dor_error_replay_50_from_subset400_task_list_*.json`
+  - `output/open6dor_perception_open6dor_error_replay_50_from_subset400_task_list_*.log`
+  - `output/open6dor_perception_summary_open6dor_paper_core_120_seed42_task_list_*.json`
+  - `output/stage5_open6dor_pipeline_records_open6dor_paper_core_120_seed42_task_list_*.json`
+  - `output/open6dor_perception_open6dor_paper_core_120_seed42_task_list_*.log`
 
 需要回传的文件夹/文件：
-- `paper_results/open6dor_short_experiments_20260429/`
+- `output/open6dor_perception_summary_open6dor_error_replay_50_from_subset400_task_list_*.json`
+- `output/stage5_open6dor_pipeline_records_open6dor_error_replay_50_from_subset400_task_list_*.json`
+- `output/open6dor_perception_open6dor_error_replay_50_from_subset400_task_list_*.log`
+- `output/open6dor_perception_summary_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/stage5_open6dor_pipeline_records_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/open6dor_perception_open6dor_paper_core_120_seed42_task_list_*.log`

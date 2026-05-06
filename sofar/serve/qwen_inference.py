@@ -130,6 +130,28 @@ def _load_open6dor_reasoning_json(output_text):
                 "target_position": triplet,
             }
 
+    labeled_xyz_patterns = [
+        r"(?is)\bx\s*[:=]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,\s*y\s*[:=]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,\s*z\s*[:=]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)",
+        r"(?is)\bx-coordinate\s*(?:is|=|:)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\D+?y-coordinate\s*(?:is|=|:)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\D+?z-coordinate\s*(?:is|=|:)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)",
+    ]
+    for pattern in labeled_xyz_patterns:
+        match = re.search(pattern, cleaned)
+        if not match:
+            continue
+        return {
+            "calculation_process": "",
+            "target_position": [float(match.group(1)), float(match.group(2)), float(match.group(3))],
+        }
+
+    parenthesized_triplets = re.findall(r"\(([^()\[\]]+)\)", cleaned)
+    for candidate in reversed(parenthesized_triplets):
+        triplet = _parse_numeric_triplet(candidate)
+        if triplet is not None:
+            return {
+                "calculation_process": "",
+                "target_position": triplet,
+            }
+
     bracket_triplets = re.findall(r"\[[^\[\]]+\]", cleaned)
     for candidate in reversed(bracket_triplets):
         triplet = _parse_numeric_triplet(candidate)
@@ -185,6 +207,7 @@ def _qwen_generate_text(qwen_model, processor, messages, max_new_tokens=1024):
         generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )
     return output_text[0]
+
 
 
 def _normalize_object_direction_info(raw_info):

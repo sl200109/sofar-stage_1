@@ -382,23 +382,65 @@
                   {
                       "id":  "stage5_open6dor_400_case_subset_manifest",
                       "owner":  "local",
-                      "status":  "in_progress",
+                      "status":  "done",
                       "title":  "生成 400-case mode-balanced evaluation subset",
-                      "notes":  "旧的 407-source local subset 已降级为历史记录；正式 400-case 现在改由 server-side from4389 task tree sampler 生成。首轮服务器结果显示 empty_mode_count=0 但 other_family_count=735，问题已定位为 taxonomy 过窄；本地已扩充 mode->family 映射并等待服务器重跑。"
+                      "notes":  "旧的 407-source local subset 已降级为历史记录；正式 400-case 已完成 from4389 task tree sampler 生成并通过 validation：available_total=1744, empty_mode_count=0, other_family_count=0, selected_total=400。"
                   },
                   {
                       "id":  "stage5_open6dor_400_case_final_method_command",
                       "owner":  "local",
-                      "status":  "in_progress",
+                      "status":  "done",
                       "title":  "准备 400-case final method server command",
-                      "notes":  "只有当 from4389 summary validation 通过时才允许生成。当前已加固删除旧命令文件的 gate，并在 summary 中写入 final_method_command_generated。"
+                      "notes":  "from4389 summary validation 已通过，当前命令文件已可用；但 subset400 首轮正式运行暴露了 runtime taxonomy 与 reasoning JSON 稳定性问题，已进入定向代码修正与复跑阶段。"
                   },
                   {
                       "id":  "stage5_open6dor_400_case_formal_eval",
                       "owner":  "server",
                       "status":  "todo",
                       "title":  "执行 Open6DOR 400-case mode-balanced formal evaluation",
-                      "notes":  "当前只做短耗时准备，不启动全量 4389，也不做完整 ablation；待确认后再跑最终 400-case method。"
+                      "notes":  "subset400 首轮已完成：400 tasks, success=350, error=50, used_stage5=13。出于成本考虑，当前不优先复跑 400-case；先执行 50-error replay 与 120-case paper-core 两个低成本 follow-up 子集。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_subset400_runtime_fix",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "针对 subset400 首轮错误修正 runtime taxonomy 与 reasoning JSON 提取",
+                      "notes":  "已扩充 watch_upright/tape_measure_upright/handle_*/blade_*/ballpoint_right 等运行时路由与 execution band，并增强 qwen reasoning 的 x/y/z 与括号三元组提取。下一步用 error_replay_50 做低成本验证。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_error_replay_subset_generation",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "生成 subset400 的 50-error replay 子集",
+                      "notes":  "已新增 generate_open6dor_followup_subsets.py，并输出 open6dor_error_replay_50_from_subset400 的 manifest / task list / summary / command。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_error_replay_eval",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 50-error replay 定向复跑",
+                      "notes":  "只复跑 subset400 首轮的 50 个 error case，用于验证 runtime taxonomy / reasoning JSON / parse-stage OOM 修正是否有效压低 error_count。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_paper_core_120_subset_generation",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "生成 120-case paper-core 三族主结果子集",
+                      "notes":  "已从 subset400 中抽取 120 条低成本主结果子集：upright_vertical 40, flat_upside_down_lying_flat 40, plug_right 40；显式排除 cap/clip/sideways 和 subset400 首轮 error 样本。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_paper_core_120_formal_eval",
+                      "owner":  "server",
+                      "status":  "todo",
+                      "title":  "执行 120-case paper-core 正式评测",
+                      "notes":  "paper_core_120 首轮结果为 total=120, success=67, error=53。用户已切换到 V100，当前已撤销本地 OOM 特化修改，按原评测前代码继续走 error_replay_50 -> paper_core_120。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_paper_core_120_oom_fix",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "撤销 paper_core_120 的本地 OOM 特化修改",
+                      "notes":  "用户已改用 V100，本地此前临时加入的低显存/OOM retry/CUDA cache cleanup 特化逻辑已回退，不再作为当前服务器评测代码路径。"
                   }
               ]
 }

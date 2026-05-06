@@ -13,8 +13,30 @@ SPATIALBENCH_CONTROLLER = "spatialbench_semantic_orientation_agent"
 OPEN6DOR_CONTROLLER = "open6dor_semantic_orientation_agent"
 AUTO_CONTROLLER = "semantic_orientation_auto_router"
 
-OPEN6DOR_DIRECT_ALLOW_MODES = {"upright", "upright_lens_forth"}
-OPEN6DOR_CONDITIONAL_VERIFY_MODES = {"plug_right", "lying_flat"}
+OPEN6DOR_DIRECT_ALLOW_MODES = {
+    "upright",
+    "upright_lens_forth",
+    "upright_textual",
+    "watch_upright",
+    "tape_measure_upright",
+}
+OPEN6DOR_CONDITIONAL_VERIFY_MODES = {
+    "plug_right",
+    "lying_flat",
+    "upside_down",
+    "upside_down_textual",
+    "lower_rim",
+    "handle_right",
+    "handle_left",
+    "handle_right_jaw_left",
+    "blade_right",
+    "blades_right",
+    "bulb_right_handle_left",
+    "prong_right",
+    "spout_right",
+    "ballpoint_right",
+    "clasp_right",
+}
 OPEN6DOR_SEMANTIC_AXIS_VERIFY_MODES = {"lying_flat"}
 OPEN6DOR_SEMANTIC_AXIS_MIN_COSINE = 0.85
 OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION = "rule_v2_legacy"

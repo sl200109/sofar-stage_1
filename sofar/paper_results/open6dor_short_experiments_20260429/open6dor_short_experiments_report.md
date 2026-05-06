@@ -42,3 +42,19 @@
 
 子集 manifest 已生成, 见同目录 JSON 文件.
 Formal 400-case sampling is delegated to the server-side from4389 sampler.
+
+## Low-Cost Follow-Up
+
+- `open6dor_error_replay_50_from_subset400`
+  - replay all 50 previous subset400 error cases
+  - purpose: validate runtime taxonomy and reasoning JSON fixes cheaply
+- `open6dor_paper_core_120_seed42`
+  - 40 `upright_vertical`
+  - 40 `flat_upside_down_lying_flat`
+  - 40 `plug_right`
+  - excludes `cap/clip/sideways`
+  - excludes previous subset400 error cases
+
+Current execution order:
+1. run `error_replay_50`
+2. if stable, run `paper_core_120`

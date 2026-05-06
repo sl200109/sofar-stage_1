@@ -1,0 +1,54 @@
+{
+  "subset_name": "open6dor_paper_core_120_seed42",
+  "sampling_seed": 42,
+  "source_manifest_path": "paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json",
+  "source_records_path": "output/stage5_open6dor_pipeline_records_open6dor_eval_subset_400_from4389_seed42_task_list_20260430_151507.json",
+  "selected_total": 120,
+  "selected_error_count_from_previous_run": 0,
+  "selected_non_error_count_from_previous_run": 120,
+  "selected_family_distribution": {
+    "flat_upside_down_lying_flat": 40,
+    "plug_right": 40,
+    "upright_vertical": 40
+  },
+  "selected_orientation_mode_distribution": {
+    "lower_rim": 1,
+    "lying_flat": 20,
+    "upside_down": 19,
+    "ballpoint_right": 6,
+    "blade_right": 5,
+    "blades_right": 6,
+    "bulb_right_handle_left": 4,
+    "clasp_right": 1,
+    "handle_left": 6,
+    "handle_right": 5,
+    "plug_right": 5,
+    "prong_right": 1,
+    "spout_right": 1,
+    "tape_measure_upright": 13,
+    "upright": 12,
+    "upright_lens_forth": 5,
+    "upright_textual": 1,
+    "watch_upright": 9
+  },
+  "previous_selected_execution_mode_distribution": {
+    "baseline_only": 108,
+    "stage5_conditional_verified": 7,
+    "stage5_shadow_only": 1,
+    "fallback_reasoning": 2,
+    "stage5_direct_verified": 2
+  },
+  "previous_agent_decision_distribution": {
+    "skip_stage5_due_to_fallback_required": 108,
+    "use_stage5_conditional_verify": 7,
+    "shadow_stage5_for_debug": 1,
+    "reject_stage5_keep_parser_orientation": 2,
+    "use_stage5_direct": 2
+  },
+  "notes": "Three-family paper-core subset: 40 upright + 40 flat + 40 plug-like, excluding cap/clip and excluding previous error cases.",
+  "quota_plan": {
+    "upright_vertical": 40,
+    "flat_upside_down_lying_flat": 40,
+    "plug_right": 40
+  }
+}

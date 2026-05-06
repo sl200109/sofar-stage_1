@@ -1,0 +1,43 @@
+{
+  "subset_name": "open6dor_error_replay_50_from_subset400",
+  "sampling_seed": 42,
+  "source_manifest_path": "paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42.json",
+  "source_records_path": "output/stage5_open6dor_pipeline_records_open6dor_eval_subset_400_from4389_seed42_task_list_20260430_151507.json",
+  "selected_total": 50,
+  "selected_error_count_from_previous_run": 50,
+  "selected_non_error_count_from_previous_run": 0,
+  "selected_family_distribution": {
+    "cap_clip_sideways": 12,
+    "flat_upside_down_lying_flat": 10,
+    "plug_right": 14,
+    "upright_vertical": 14
+  },
+  "selected_orientation_mode_distribution": {
+    "cap_left_bottom_right": 2,
+    "cap_right_bottom_left": 1,
+    "earpiece_far": 4,
+    "multimeter_forth": 1,
+    "remote_control_forth": 3,
+    "sideways_textual": 1,
+    "lower_rim": 2,
+    "lying_flat": 3,
+    "upside_down": 5,
+    "blade_right": 2,
+    "blades_right": 1,
+    "handle_left": 3,
+    "handle_right": 6,
+    "plug_right": 1,
+    "spout_right": 1,
+    "tape_measure_upright": 1,
+    "upright": 9,
+    "upright_lens_forth": 1,
+    "watch_upright": 3
+  },
+  "previous_selected_execution_mode_distribution": {
+    "baseline_only": 50
+  },
+  "previous_agent_decision_distribution": {
+    "skip_stage5_disabled": 50
+  },
+  "notes": "All previous subset400 error cases, used to validate targeted runtime and reasoning fixes cheaply."
+}

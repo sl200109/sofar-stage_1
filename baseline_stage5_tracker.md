@@ -629,3 +629,106 @@
 - 当前结论：
   - 这轮仍然不跑 400-case evaluation
   - 下一步只需要把更新后的 sampling 代码同步到服务器，然后重跑 `from4389` manifest 生成，重新检查 `other_family_count` 和 `selected_family_distribution`
+
+## 26. 2026-05-06 subset400 正式运行结果已回传，当前 blocker 已定位
+- 服务器 `subset400` 结果文件：
+  - `sofar/output/open6dor_perception_summary_open6dor_eval_subset_400_from4389_seed42_task_list_20260430_151507.json`
+  - `sofar/output/stage5_open6dor_pipeline_records_open6dor_eval_subset_400_from4389_seed42_task_list_20260430_151507.json`
+  - `sofar/output/open6dor_perception_open6dor_eval_subset_400_from4389_seed42_task_list_20260430_151507.log`
+- 核心结果：
+  - `total_tasks = 400`
+  - `success_count = 350`
+  - `error_count = 50`
+  - `used_stage5_count = 13`
+  - `fallback_count = 387`
+- 最关键的两个错误源：
+  - `50` 个错误中有 `47` 个发生在 `reasoning`，其中 `46` 个是 `No valid Open6DOR reasoning JSON found in model output`
+  - 运行时 `task_family / execution_band` 仍落后于抽样 taxonomy，`blade_right / ballpoint_right / tape_measure_upright / watch_upright` 等 mode 在 runtime 里仍大量被视为 `unknown` 或被过早 `fallback_required`
+
+## 27. 2026-05-06 已在本地针对 subset400 错误做定向修正
+- 本轮本地改动文件：
+  - `sofar/open6dor/open6dor_perception.py`
+  - `sofar/serve/semantic_orientation_agent.py`
+  - `sofar/serve/qwen_inference.py`
+  - `tests/test_open6dor_runtime_agent_modes.py`
+  - `tests/test_qwen_open6dor_reasoning_json.py`
+- 已实现内容：
+  - `open6dor_perception.py`
+    - 运行时 `infer_open6dor_stage5_task_family` 改为复用 `eval_subset_sampling.py` 的 taxonomy 结果，再映射到 `upright / flat / plug_cap_sideways`
+    - `build_joint_object_context(...)` 不再只依赖对象模板；当对象模板缺失时，会回退到 mode-aware generic hints
+    - 新覆盖的高频对象/模式包括：
+      - `watch_upright`
+      - `tape_measure_upright`
+      - `handle_right / handle_left / handle_right_jaw_left`
+      - `blade_right / blades_right`
+      - `ballpoint_right / clasp_right / prong_right / spout_right`
+      - `remote_control_forth / earpiece_far / multimeter_forth`
+  - `semantic_orientation_agent.py`
+    - `direct_allow` 扩到 `upright_textual / watch_upright / tape_measure_upright`
+    - `conditional_verify` 扩到 `handle_* / blade_* / ballpoint_right / prong_right / spout_right / lower_rim / upside_down*`
+  - `qwen_inference.py`
+    - `Open6DOR reasoning JSON` 提取增强，新增对以下输出格式的恢复：
+      - `x=0.53, y=0.11, z=0.30`
+      - `x: 0.53, y: 0.11, z: 0.30`
+      - `(0.37, 0.21, 0.34)`
+- 本地验证状态：
+  - `python -m py_compile sofar/open6dor/open6dor_perception.py sofar/serve/semantic_orientation_agent.py sofar/serve/qwen_inference.py tests/test_open6dor_runtime_agent_modes.py tests/test_qwen_open6dor_reasoning_json.py`
+  - `python -m unittest tests.test_open6dor_runtime_agent_modes tests.test_qwen_open6dor_reasoning_json`
+  - 已通过；`qwen_inference` 的 2 个解析测试在当前本地环境下按依赖情况跳过，不影响语法与代码集成检查
+- 当前结论：
+  - 这轮改动是直接针对 `subset400` 的主错误点，不涉及新训练，也不重改 verifier 主逻辑
+  - 下一步应在服务器上复跑同一份 `subset400 task list`，重点看：
+    - `error_count` 是否下降
+    - `used_stage5_count` 是否上升
+    - `watch_upright / tape_measure_upright / blade_right / handle_* / ballpoint_right` 是否不再大面积 `fallback_required`
+
+## 28. 2026-05-06 已转为低成本 follow-up 子集，不再优先复跑 subset400
+- 变更原因：
+  - 用户明确不希望继续为 `400-case` 全量复跑付费
+  - `subset400` 首轮结果已经足够定位 blocker，继续整批复跑性价比低
+- 本轮新增文件：
+  - `sofar/tools/generate_open6dor_followup_subsets.py`
+- 本地已生成的新产物：
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_task_list.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_summary.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_command.txt`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_summary.json`
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_final_method_command.txt`
+- 子集设计：
+  - `error_replay_50`：直接复用 subset400 首轮的全部 `50` 个 error case，用于低成本验证 runtime taxonomy 与 reasoning JSON 修正
+  - `paper_core_120`：从已完成的 `subset400` 中抽取 `120` 条低成本论文主结果子集，仅保留 `upright_vertical / flat_upside_down_lying_flat / plug_right` 三个 family，各 `40` 条
+  - `paper_core_120` 显式排除了：
+    - `cap/clip/sideways`
+    - subset400 首轮已经报错的样本
+- 当前结论：
+  - 下一步不再优先复跑 `400-case`
+  - 服务器侧优先顺序改为：
+    - 先跑 `error_replay_50`
+    - 再跑 `paper_core_120`
+  - 只有这两步结果足够稳定时，才考虑是否回到更大规模 formal evaluation
+
+## 29. 2026-05-06 已撤销本地 OOM 特化修改，改回评测前代码
+- 背景：
+  - 用户已切换到 `V100` 服务器
+  - 不再保留此前为 `3090 paper_core_120` 首轮 OOM 临时加的低显存 / OOM retry 特化逻辑
+- 本轮回退文件：
+  - `sofar/serve/qwen_inference.py`
+  - `sofar/open6dor/open6dor_perception.py`
+  - `tests/test_qwen_open6dor_reasoning_json.py`
+- 已撤销内容：
+  - `qwen_inference.py` 中的 `use_cache=False` 默认改动
+  - `qwen_inference.py` 中的 OOM 后短 token 重试
+  - `open6dor_perception.py` 中的 OOM 专用 CUDA cache 清理逻辑
+  - 对应的本地 OOM 回归测试
+- 保留不变的内容：
+  - runtime taxonomy 扩充
+  - reasoning JSON 提取增强
+  - 三专家 routing
+  - verifier 与 semantic-axis 接回逻辑
+- 当前结论：
+  - 下一步仍按低成本顺序执行：
+    - 先跑 `error_replay_50`
+    - 再跑 `paper_core_120`
