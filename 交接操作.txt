@@ -1,202 +1,131 @@
-当前版本：2026-05-06
+当前版本：2026-05-10
 
-上传文件：
+上传文件夹：
+- `sofar/serve/`
+- `sofar/open6dor/`
+- `sofar/analysis/`
+- `tests/`
+
+文件：
 - `sofar/serve/open6dor_json_utils.py`
 - `sofar/serve/qwen_inference.py`
+- `sofar/serve/semantic_orientation_agent.py`
 - `sofar/open6dor/open6dor_perception.py`
-- `tests/test_qwen_open6dor_reasoning_json.py`
 - `sofar/analysis/run_open6dor_subset_ablation.py`
+- `tests/test_qwen_open6dor_reasoning_json.py`
 - `tests/test_open6dor_ablation_runner.py`
+- `tests/test_open6dor_rule_v3_agent.py`
+- `tests/test_open6dor_stage5_family_mapper.py`
 
-任务 1 本地验证命令：
-```bash
-cd /data/coding/SoFar
-python -m py_compile sofar/serve/open6dor_json_utils.py sofar/serve/qwen_inference.py sofar/open6dor/open6dor_perception.py tests/test_qwen_open6dor_reasoning_json.py
-python -m unittest tests.test_qwen_open6dor_reasoning_json
-```
+服务器目标路径：
+- `/data/coding/SoFar`
 
-任务 1 服务器命令：
+任务 1：先完成 `error_replay_50`
 ```bash
 cd /data/coding/SoFar
 python open6dor/open6dor_perception.py --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_error_replay_50_from_subset400_task_list.json --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-expert-routing task_family --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative
 ```
 
-任务 1 回传文件：
+回传文件：
 - `output/open6dor_perception_summary_open6dor_error_replay_50_from_subset400_task_list_*.json`
 - `output/stage5_open6dor_pipeline_records_open6dor_error_replay_50_from_subset400_task_list_*.json`
 - `output/open6dor_perception_open6dor_error_replay_50_from_subset400_task_list_*.log`
 
-任务 1 重点看：
+重点看：
+- `error_count`
 - `reasoning_json_summary.repaired_count`
 - `reasoning_json_summary.degraded_count`
-- `error_count`
-- degraded `result.json` 是否仍包含合法 `target_position`
 
-任务 2 evaluator runner 使用方法：
-
-本地验证命令：
+任务 2：直接出论文主结果，跑 `paper_core_120`
 ```bash
+cd /data/coding/SoFar
+python open6dor/open6dor_perception.py --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json --reset-progress --rerun-existing --use-stage5-head --stage5-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-expert-routing task_family --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth --agent-mode dataset --agent-save-trace --agent-shadow-eval --speed-profile conservative
+```
+
+回传文件：
+- `output/open6dor_perception_summary_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/stage5_open6dor_pipeline_records_open6dor_paper_core_120_seed42_task_list_*.json`
+- `output/open6dor_perception_open6dor_paper_core_120_seed42_task_list_*.log`
+
+重点看：
+- `success_count`
+- `error_count`
+- `used_stage5_count`
+- `fallback_count`
+- `agent_summary`
+
+任务 2b：如果 `paper_core_120` 已经跑完，不重跑模型，只用现有 `result.json` 计算官方 evaluator 指标
+先同步：
+- `sofar/analysis/run_open6dor_subset_ablation.py`
+- `tests/test_open6dor_ablation_runner.py`
+
+```bash
+cd /data/coding/SoFar
 python -m py_compile sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_ablation_runner.py
 python -m unittest tests.test_open6dor_ablation_runner
+python sofar/analysis/run_open6dor_subset_ablation.py --dataset-root /data/coding/SoFar/datasets/open6dor_v2 --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json --output-root /data/coding/SoFar/output/open6dor_paper_core_120_existing_eval --methods pscr_rule_v2_safe --run-id paper_core_120_existing_eval --eval-only --snapshot-existing-results
 ```
 
-20-case dry-run 示例：
+说明：
+- 如果 `eval_stdout.txt` 显示 `evaluating ... with 0 tasks`，说明服务器还没有同步最新 runner；重新上传 `sofar/analysis/run_open6dor_subset_ablation.py` 后再跑任务 2b。
+
+回传文件：
+- `output/open6dor_paper_core_120_existing_eval/paper_core_120_existing_eval/ablation_summary.json`
+- `output/open6dor_paper_core_120_existing_eval/paper_core_120_existing_eval/ablation_summary.csv`
+- `output/open6dor_paper_core_120_existing_eval/paper_core_120_existing_eval/pscr_rule_v2_safe/eval_stdout.txt`
+- `output/open6dor_paper_core_120_existing_eval/paper_core_120_existing_eval/pscr_rule_v2_safe/eval_stderr.txt`
+
+重点看：
+- `valid_result_rate`
+- `position_l0`
+- `position_l1`
+- `rotation_l0`
+- `rotation_l1`
+- `rotation_l2`
+- `six_dof_pos_acc`
+- `six_dof_rot_acc`
+- `six_dof_overall`
+
+论文口径说明：
+- `paper_core_120` 当前只包含 `task_refine_6dof`，因此 `position_l0/l1` 和 `rotation_l0/l1/l2` 不适合作为该子集主指标。
+- 当前 120-case 主表优先使用：`valid_result_rate`、`six_dof_pos_acc`、`six_dof_rot_acc`、`six_dof_overall`。
+- 若必须报告官方独立 position / rotation track，需要另建包含 `task_refine_pos` 和 `task_refine_rot` 的 subset 并分别跑结果。
+
+任务 3：跑真实 20-case ablation，不跑 dry-run
 ```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_smoke \
-  --methods baseline_only,pscr_rule_v2_safe \
-  --run-id smoke20_dryrun \
-  --max-tasks 20 \
-  --dry-run
+cd /data/coding/SoFar
+python sofar/analysis/run_open6dor_subset_ablation.py --dataset-root /data/coding/SoFar/datasets/open6dor_v2 --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json --output-root /data/coding/SoFar/output/open6dor_ablation_smoke --methods baseline_only,pscr_rule_v2_safe --run-id smoke20_run --max-tasks 20 --speed-profile conservative --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
 ```
 
-20-case 真实小跑示例：
+回传文件：
+- `output/open6dor_ablation_smoke/smoke20_run/ablation_summary.json`
+- `output/open6dor_ablation_smoke/smoke20_run/ablation_summary.csv`
+- `output/open6dor_ablation_smoke/smoke20_run/error_breakdown.csv`
+
+任务 4：跑真实 20-case `rule_v3_verified` 对比
 ```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_smoke \
-  --methods baseline_only,pscr_rule_v2_safe \
-  --run-id smoke20_run \
-  --max-tasks 20 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
+cd /data/coding/SoFar
+python sofar/analysis/run_open6dor_subset_ablation.py --dataset-root /data/coding/SoFar/datasets/open6dor_v2 --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json --output-root /data/coding/SoFar/output/open6dor_ablation_rulev3_smoke --methods pscr_rule_v2_safe,pscr_rule_v3_verified --run-id rulev3_smoke20_run --max-tasks 20 --speed-profile conservative --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
 ```
 
-50-case 真实小跑示例：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_smoke \
-  --methods baseline_only,pscr_rule_v2_safe \
-  --run-id smoke50_run \
-  --max-tasks 50 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
+回传文件：
+- `output/open6dor_ablation_rulev3_smoke/rulev3_smoke20_run/ablation_summary.json`
+- `output/open6dor_ablation_rulev3_smoke/rulev3_smoke20_run/ablation_summary.csv`
+- `output/open6dor_ablation_rulev3_smoke/rulev3_smoke20_run/error_breakdown.csv`
 
-eval-only 示例：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_smoke \
-  --methods baseline_only,pscr_rule_v2_safe \
-  --run-id <existing_run_id> \
-  --max-tasks 20 \
-  --eval-only
-```
+失败时请回传：
+- 对应命令的终端报错最后 `100` 行
+- 对应 `*.log`
+- 对应 `summary.json`
 
-任务 3 rule_v3_verified 使用方法：
-
-本地验证命令：
-```bash
-python -m py_compile sofar/serve/semantic_orientation_agent.py sofar/open6dor/open6dor_perception.py sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_rule_v3_agent.py
-python -m unittest tests.test_open6dor_rule_v3_agent
-python -m unittest tests.test_open6dor_ablation_runner
-```
-
-20-case dry-run：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_rulev3_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id rulev3_smoke20_dryrun \
-  --max-tasks 20 \
-  --dry-run \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
-
-20-case 真实小跑：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_rulev3_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id rulev3_smoke20_run \
-  --max-tasks 20 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
-
-50-case 真实小跑：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_rulev3_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id rulev3_smoke50_run \
-  --max-tasks 50 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
-阶段 4 family mapper 使用方法：
-
-本地验证命令：
-```bash
-python -m py_compile sofar/open6dor/open6dor_perception.py sofar/serve/semantic_orientation_agent.py tests/test_open6dor_stage5_family_mapper.py
-python -m unittest tests.test_open6dor_stage5_family_mapper
-python -m unittest tests.test_open6dor_rule_v3_agent
-```
-
-20-case dry-run：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_family_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id family_smoke20_dryrun \
-  --max-tasks 20 \
-  --dry-run \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
-
-20-case 真实小跑：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_family_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id family_smoke20_run \
-  --max-tasks 20 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
-
-50-case 真实小跑：
-```bash
-python sofar/analysis/run_open6dor_subset_ablation.py \
-  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
-  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_eval_subset_400_from4389_seed42_task_list.json \
-  --output-root /data/coding/SoFar/output/open6dor_ablation_family_smoke \
-  --methods pscr_rule_v2_safe,pscr_rule_v3_verified \
-  --run-id family_smoke50_run \
-  --max-tasks 50 \
-  --speed-profile conservative \
-  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
-  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
-  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
-```
+操作分流记录：
+- 正常执行：用 `open6dor/open6dor_perception.py` 跑模型，生成或覆盖每个 task 的 `output/result.json`，同时生成 `open6dor_perception_summary_*.json`、`stage5_open6dor_pipeline_records_*.json`、日志。
+- 已有结果只评估：用 `sofar/analysis/run_open6dor_subset_ablation.py --eval-only --snapshot-existing-results`，不重跑模型，只把当前 dataset 里的 `result.json` 复制成 evaluator mirror，然后调用 `open6dor/eval_open6dor.py` 生成 `ablation_summary.csv/json`。
+- `paper_core_120` 已经跑完后，优先用任务 2b 计算官方指标；不要重复跑任务 2，除非需要重新生成模型输出。
+2026-05-10 paper writing summary:
+- 新增论文写作输入文档：
+  - `sofar/paper_results/open6dor_short_experiments_20260429/open6dor_experiment_summary_for_paper_20260510.md`
+- 当前不需要继续跑服务器命令；如需严格同 subset baseline 对比，再跑 `baseline_only,pscr_rule_v2_safe` 120-case ablation。
+- 当前主结果口径：
+  - `paper_core_120` 是 120-case Open6DOR 6DoF subset，不是 full benchmark。
+  - official evaluator stdout: `6-dof pos acc=0.616666615277782`, `6-dof rot acc=0.24999997916666838`, `6-dof all acc=0.14999998750000104`, `valid_result_rate=1.0`。

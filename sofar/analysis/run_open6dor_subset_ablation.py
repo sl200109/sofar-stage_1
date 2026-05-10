@@ -43,6 +43,8 @@ SUMMARY_FIELDS = [
     "rotation_l0",
     "rotation_l1",
     "rotation_l2",
+    "six_dof_pos_acc",
+    "six_dof_rot_acc",
     "six_dof_overall",
     "stage5_run_count",
     "stage5_used_count",
@@ -68,6 +70,14 @@ def parse_args():
     parser.add_argument("--speed-profile", type=str, default="conservative")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--eval-only", action="store_true")
+    parser.add_argument(
+        "--snapshot-existing-results",
+        action="store_true",
+        help=(
+            "When used with --eval-only, build the evaluator mirror from existing "
+            "dataset output/result.json files instead of requiring a prior runner snapshot."
+        ),
+    )
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--python", type=str, default="python")
     parser.add_argument("--stage5-checkpoint", type=str, default=None)
@@ -308,6 +318,14 @@ def task_relative_path(task_dir, dataset_root):
     return task_dir.resolve().relative_to(dataset_root.resolve())
 
 
+def task_evaluator_relative_path(task_dir):
+    parts = list(Path(task_dir).resolve().parts)
+    for idx, part in enumerate(parts):
+        if part in {"task_refine_pos", "task_refine_rot", "task_refine_6dof"}:
+            return Path(*parts[idx:])
+    raise ValueError(f"Could not locate Open6DOR task_refine segment in task path: {task_dir}")
+
+
 def backup_original_results(task_dirs, dataset_root, backup_root):
     backup_root = ensure_dir(backup_root)
     manifest = {}
@@ -344,7 +362,7 @@ def restore_original_results(task_dirs, dataset_root, backup_root, manifest):
 def snapshot_method_results(method_dir, dataset_root, task_dirs):
     mirror_root = ensure_dir(Path(method_dir) / "eval_dataset_root" / "open6dor_v2")
     for task_dir in task_dirs:
-        rel = task_relative_path(task_dir, dataset_root)
+        rel = task_evaluator_relative_path(task_dir)
         source_config = task_dir / "task_config_new5.json"
         target_config = mirror_root / rel / "task_config_new5.json"
         ensure_dir(target_config.parent)
@@ -400,6 +418,8 @@ def parse_eval_output(stdout_text, stderr_text, method_dir):
         "rotation_l0": None,
         "rotation_l1": None,
         "rotation_l2": None,
+        "six_dof_pos_acc": None,
+        "six_dof_rot_acc": None,
         "six_dof_overall": None,
         "eval_parse_status": "failed",
     }
@@ -410,6 +430,8 @@ def parse_eval_output(stdout_text, stderr_text, method_dir):
         "rotation_l0": [r"Rotation L0\s*:\s*([0-9.]+)", r"rotation_l0\s*[:=]\s*([0-9.]+)", r"rot_l0\s*[:=]\s*([0-9.]+)"],
         "rotation_l1": [r"Rotation L1\s*:\s*([0-9.]+)", r"rotation_l1\s*[:=]\s*([0-9.]+)", r"rot_l1\s*[:=]\s*([0-9.]+)"],
         "rotation_l2": [r"Rotation L2\s*:\s*([0-9.]+)", r"rotation_l2\s*[:=]\s*([0-9.]+)", r"rot_l2\s*[:=]\s*([0-9.]+)"],
+        "six_dof_pos_acc": [r"6-DoF Pos(?:ition)?\s*:\s*([0-9.]+)", r"six_dof_pos_acc\s*[:=]\s*([0-9.]+)", r"6dof_pos\s*[:=]\s*([0-9.]+)"],
+        "six_dof_rot_acc": [r"6-DoF Rot(?:ation)?\s*:\s*([0-9.]+)", r"six_dof_rot_acc\s*[:=]\s*([0-9.]+)", r"6dof_rot\s*[:=]\s*([0-9.]+)"],
         "six_dof_overall": [r"6-DoF Overall\s*:\s*([0-9.]+)", r"six_dof_overall\s*[:=]\s*([0-9.]+)", r"6dof_overall\s*[:=]\s*([0-9.]+)", r"\boverall\s*[:=]\s*([0-9.]+)"],
     }
     for key, patterns in explicit_patterns.items():
@@ -451,19 +473,34 @@ def parse_eval_output(stdout_text, stderr_text, method_dir):
             if metrics["rotation_l2"] is None and level3:
                 metrics["rotation_l2"] = parse_float_from_match(level3.group(1))
 
-    if metrics["six_dof_overall"] is None:
+    if metrics["six_dof_pos_acc"] is None or metrics["six_dof_rot_acc"] is None or metrics["six_dof_overall"] is None:
         dof_block = section_text("[eval_open6dor] evaluating 6-dof track", "[eval_open6dor] 6-dof track finished")
         if dof_block:
+            pos_acc = re.search(r"6-dof pos acc:\s*([0-9.]+)", dof_block, flags=re.IGNORECASE)
+            rot_acc = re.search(r"6-dof rot acc:\s*([0-9.]+)", dof_block, flags=re.IGNORECASE)
             overall = re.search(r"6-dof all acc:\s*([0-9.]+)", dof_block, flags=re.IGNORECASE)
-            if overall:
+            if metrics["six_dof_pos_acc"] is None and pos_acc:
+                metrics["six_dof_pos_acc"] = parse_float_from_match(pos_acc.group(1))
+            if metrics["six_dof_rot_acc"] is None and rot_acc:
+                metrics["six_dof_rot_acc"] = parse_float_from_match(rot_acc.group(1))
+            if metrics["six_dof_overall"] is None and overall:
                 metrics["six_dof_overall"] = parse_float_from_match(overall.group(1))
 
     found_count = sum(1 for key in SUMMARY_FIELDS if key in metrics and metrics[key] is not None)
     metric_found_count = sum(
-        1 for key in ["position_l0", "position_l1", "rotation_l0", "rotation_l1", "rotation_l2", "six_dof_overall"]
+        1 for key in [
+            "position_l0",
+            "position_l1",
+            "rotation_l0",
+            "rotation_l1",
+            "rotation_l2",
+            "six_dof_pos_acc",
+            "six_dof_rot_acc",
+            "six_dof_overall",
+        ]
         if metrics[key] is not None
     )
-    if metric_found_count == 6:
+    if metric_found_count == 8:
         metrics["eval_parse_status"] = "complete"
     elif metric_found_count > 0:
         metrics["eval_parse_status"] = "partial"
@@ -476,7 +513,16 @@ def parse_eval_output(stdout_text, stderr_text, method_dir):
             except Exception:
                 continue
             if isinstance(payload, dict):
-                for key in ["position_l0", "position_l1", "rotation_l0", "rotation_l1", "rotation_l2", "six_dof_overall"]:
+                for key in [
+                    "position_l0",
+                    "position_l1",
+                    "rotation_l0",
+                    "rotation_l1",
+                    "rotation_l2",
+                    "six_dof_pos_acc",
+                    "six_dof_rot_acc",
+                    "six_dof_overall",
+                ]:
                     if metrics[key] is None and key in payload:
                         metrics[key] = parse_float_from_match(payload.get(key))
     return metrics
@@ -707,7 +753,12 @@ def run_method(method, args, dataset_root, datasets_dir, effective_task_list_pat
     }
 
     if args.eval_only:
-        pass
+        if args.snapshot_existing_results:
+            snapshot_method_results(method_dir, dataset_root, load_task_dirs(effective_task_entries, dataset_root))
+            record["method_notes"] = (
+                (record["method_notes"] + "; " if record["method_notes"] else "")
+                + "snapshot_existing_results"
+            )
     elif args.skip_existing and latest_matching_file(method_dir, "open6dor_perception_summary*.json"):
         record["method_notes"] = (record["method_notes"] + "; " if record["method_notes"] else "") + "perception skipped due to --skip-existing"
     elif not method_cfg["runnable"]:
@@ -753,7 +804,19 @@ def run_method(method, args, dataset_root, datasets_dir, effective_task_list_pat
     valid_summary = summarize_valid_results(method_dir, effective_task_entries)
     pipeline_summary = extract_pipeline_summary_fields(method_dir)
     record.update(valid_summary)
-    record.update({k: eval_metrics.get(k) for k in ["position_l0", "position_l1", "rotation_l0", "rotation_l1", "rotation_l2", "six_dof_overall"]})
+    record.update({
+        k: eval_metrics.get(k)
+        for k in [
+            "position_l0",
+            "position_l1",
+            "rotation_l0",
+            "rotation_l1",
+            "rotation_l2",
+            "six_dof_pos_acc",
+            "six_dof_rot_acc",
+            "six_dof_overall",
+        ]
+    })
     record["eval_parse_status"] = eval_metrics.get("eval_parse_status", "failed")
     for key in [
         "stage5_run_count",
