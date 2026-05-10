@@ -462,6 +462,13 @@
                       "status":  "done",
                       "title":  "撤销 paper_core_120 的本地 OOM 特化修改",
                       "notes":  "用户已改用 V100，本地此前临时加入的低显存/OOM retry/CUDA cache cleanup 特化逻辑已回退，不再作为当前服务器评测代码路径。"
+                  },
+                  {
+                      "id":  "open6dor_unify_pscr_verified_policy",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "统一 Open6DOR PSCR agent policy 为 pscr_verified",
+                      "notes":  "已合并 rule_v2/rule_v3 为唯一 PSCR policy，保留 verifier-gated injection，修复 fallback route early-return。"
                   }
               ]
 }

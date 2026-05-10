@@ -18,10 +18,14 @@ if str(ROOT_DIR) not in sys.path:
 
 SUPPORTED_METHODS = {
     "baseline_only",
+    "pscr_verified",
     "pscr_rule_v2_safe",
     "pscr_rule_v3_verified",
-    "pscr_shadow",
-    "pscr_direct_no_verify",
+}
+
+METHOD_ALIASES = {
+    "pscr_rule_v2_safe": "pscr_verified",
+    "pscr_rule_v3_verified": "pscr_verified",
 }
 
 SUMMARY_FIELDS = [
@@ -143,10 +147,15 @@ def make_sliced_task_list(task_list_path, output_run_dir, max_tasks, mode="first
 
 
 def parse_methods(methods_arg):
-    methods = [item.strip() for item in str(methods_arg or "").split(",") if item.strip()]
+    raw_methods = [item.strip() for item in str(methods_arg or "").split(",") if item.strip()]
+    methods = []
+    for item in raw_methods:
+        normalized = METHOD_ALIASES.get(item, item)
+        if normalized not in methods:
+            methods.append(normalized)
     if not methods:
         raise ValueError("No methods provided")
-    unknown = [item for item in methods if item not in SUPPORTED_METHODS]
+    unknown = [item for item in raw_methods if item not in SUPPORTED_METHODS]
     if unknown:
         raise ValueError(f"Unsupported methods: {unknown}")
     return methods
@@ -170,12 +179,16 @@ def detect_eval_script():
     raise FileNotFoundError("Could not find eval_open6dor.py in sofar/open6dor or open6dor")
 
 
-def detect_rule_v3_support():
+def detect_pscr_verified_support():
     candidate = ROOT_DIR / "serve" / "semantic_orientation_agent.py"
     if not candidate.exists():
         return False
     text = candidate.read_text(encoding="utf-8")
-    return "rule_v3_verified" in text
+    return "pscr_verified" in text
+
+
+def detect_rule_v3_support():
+    return detect_pscr_verified_support()
 
 
 def detect_open6dor_agent_mode_support():
@@ -247,7 +260,7 @@ def build_method_command(method, args, effective_task_list_path):
             notes.append("baseline_only_agent_mode_disabled")
         else:
             notes.append("baseline_only_no_stage5_no_agent_mode")
-    elif method in {"pscr_rule_v2_safe", "pscr_shadow"}:
+    elif method in {"pscr_verified", "pscr_rule_v2_safe", "pscr_rule_v3_verified"}:
         command += [
             "--use-stage5-head",
             "--stage5-expert-routing",
@@ -255,32 +268,15 @@ def build_method_command(method, args, effective_task_list_path):
             "--agent-mode",
             "dataset",
             "--agent-policy",
-            "rule_v2",
+            "pscr_verified",
             "--agent-save-trace",
             "--agent-shadow-eval",
         ]
-        if method == "pscr_shadow":
-            notes.append("uses existing --agent-shadow-eval; final result behavior follows current agent policy")
-    elif method == "pscr_rule_v3_verified":
-        command += [
-            "--use-stage5-head",
-            "--stage5-expert-routing",
-            "task_family",
-            "--agent-mode",
-            "dataset",
-            "--agent-policy",
-            "rule_v3_verified",
-            "--agent-save-trace",
-            "--agent-shadow-eval",
-        ]
-        warnings.append("pscr_rule_v3_verified requires rule_v3_verified implementation in semantic_orientation_agent.py")
-        if not detect_rule_v3_support():
+        if method != "pscr_verified":
+            notes.append(f"legacy_method_alias:{method}->pscr_verified")
+        if not detect_pscr_verified_support():
             runnable = False
-            skip_reason = "skipped_missing_rule_v3"
-    elif method == "pscr_direct_no_verify":
-        warnings.append("pscr_direct_no_verify is reserved; current pipeline has no safe direct-no-verify switch")
-        runnable = False
-        skip_reason = "skipped_missing_direct_no_verify"
+            skip_reason = "skipped_missing_pscr_verified"
     else:
         raise ValueError(f"Unexpected method: {method}")
 

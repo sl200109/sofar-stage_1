@@ -119,11 +119,11 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
         self.assertTrue(route["family_shadow_only"])
         self.assertIn("part_axis_left_right_no_checkpoint_shadow_only", route["route_reason"])
 
-    def test_rule_v3_part_axis_without_checkpoint_never_injects(self):
+    def test_pscr_verified_part_axis_without_checkpoint_never_injects(self):
         decision = decide_open6dor_agent_action(
             stage5_enabled=True,
             orientation_mode="handle_right",
-            agent_policy="rule_v3_verified",
+            agent_policy="pscr_verified",
             fallback_required=True,
             stage4_cache_available=True,
             task_family=STAGE5_TASK_FAMILY_PART_AXIS,
@@ -134,14 +134,14 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
         self.assertFalse(decision["stage5_allowed"])
         self.assertIn(
             "part_axis_left_right_no_checkpoint_shadow_only",
-            decision["agent_signals"]["rule_v3_block_reason"],
+            decision["agent_signals"]["pscr_block_reason"],
         )
 
-    def test_rule_v3_plug_family_still_allows_conditional_verify(self):
+    def test_pscr_verified_plug_family_still_allows_conditional_verify(self):
         decision = decide_open6dor_agent_action(
             stage5_enabled=True,
             orientation_mode="plug_right",
-            agent_policy="rule_v3_verified",
+            agent_policy="pscr_verified",
             fallback_required=True,
             stage4_cache_available=True,
             task_family=STAGE5_TASK_FAMILY_PLUG,
@@ -149,21 +149,21 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
             checkpoint_available=True,
         )
         self.assertEqual(decision["decision"], "use_stage5_conditional_verify")
-        self.assertTrue(decision["agent_signals"]["rule_v3_allowed_by_fallback_override"])
+        self.assertTrue(decision["agent_signals"]["pscr_fallback_override"])
 
     def test_summary_family_statistics(self):
         summary = summarize_open6dor_agent_records(
             [
                 {
                     "stage5_enabled": True,
-                    "agent_policy": "rule_v3_verified",
+                    "agent_policy": "pscr_verified",
                     "agent_decision": "use_stage5_conditional_verify",
                     "agent_selected_execution_mode": "stage5_conditional_verified",
                     "agent_used_stage5": True,
                     "agent_shadow_used": False,
                     "agent_fallback_to_baseline": False,
                     "agent_verification_status": "accepted",
-                    "agent_signals": {"rule_v3_block_reason": ""},
+                    "agent_signals": {"pscr_block_reason": ""},
                     "stage5_mode": "plug_right",
                     "stage5_checkpoint_family": STAGE5_TASK_FAMILY_PLUG,
                     "stage5_checkpoint_source": "family_specific",
@@ -173,14 +173,14 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
                 },
                 {
                     "stage5_enabled": True,
-                    "agent_policy": "rule_v3_verified",
-                    "agent_decision": "shadow_stage5_for_debug",
-                    "agent_selected_execution_mode": "stage5_shadow_only",
+                    "agent_policy": "pscr_verified",
+                    "agent_decision": "skip_stage5_due_to_missing_checkpoint",
+                    "agent_selected_execution_mode": "baseline_only",
                     "agent_used_stage5": False,
-                    "agent_shadow_used": True,
+                    "agent_shadow_used": False,
                     "agent_fallback_to_baseline": True,
                     "agent_verification_status": "not_run",
-                    "agent_signals": {"rule_v3_block_reason": "part_axis_left_right_no_checkpoint_shadow_only"},
+                    "agent_signals": {"pscr_block_reason": "part_axis_left_right_no_checkpoint_shadow_only"},
                     "stage5_mode": "handle_right",
                     "stage5_checkpoint_family": STAGE5_TASK_FAMILY_PART_AXIS,
                     "stage5_checkpoint_source": "none",
@@ -190,14 +190,14 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
                 },
                 {
                     "stage5_enabled": True,
-                    "agent_policy": "rule_v2",
+                    "agent_policy": "pscr_verified",
                     "agent_decision": "skip_stage5_due_to_mode_gating",
                     "agent_selected_execution_mode": "baseline_only",
                     "agent_used_stage5": False,
                     "agent_shadow_used": False,
                     "agent_fallback_to_baseline": True,
                     "agent_verification_status": "not_run",
-                    "agent_signals": {"rule_v3_block_reason": "unknown_family"},
+                    "agent_signals": {"pscr_block_reason": "unknown_family"},
                     "stage5_mode": "unknown_mode_xxx",
                     "stage5_checkpoint_family": STAGE5_TASK_FAMILY_UNKNOWN,
                     "stage5_checkpoint_source": "none",
@@ -211,6 +211,8 @@ class Open6DORStage5FamilyMapperTest(unittest.TestCase):
         self.assertGreaterEqual(summary["part_axis_left_right_shadow_only_count"], 1)
         self.assertGreaterEqual(summary["unknown_family_count"], 1)
         self.assertGreaterEqual(summary["stage5_used_count_by_family"][STAGE5_TASK_FAMILY_PLUG], 1)
+        self.assertIn("pscr_verified", summary["agent_policy_distribution"])
+        self.assertIn("pscr_block_reason_distribution", summary)
 
 
 if __name__ == "__main__":

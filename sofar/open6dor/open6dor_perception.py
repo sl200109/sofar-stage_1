@@ -53,9 +53,11 @@ from serve.stage4_point_data import (
 )
 from serve.stage5_inference import predict_from_stage4_dir
 from serve.semantic_orientation_agent import (
+    PSCR_VERIFIED_POLICY,
     decide_auto_agent_route,
     decide_open6dor_agent_action,
     infer_open6dor_execution_band,
+    normalize_agent_policy,
     verify_open6dor_agent_outcome,
 )
 
@@ -288,11 +290,6 @@ def resolve_open6dor_stage5_checkpoint_route(
         route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
         return route
 
-    if fallback_required:
-        route["route_reason"] = "fallback_required"
-        route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
-        route["signals"]["stage5_family_checkpoint_available"] = bool(route["family_checkpoint_available"])
-        return route
     if not stage4_cache_available:
         route["route_reason"] = "stage4_cache_missing"
         route["signals"]["stage5_family_shadow_only"] = bool(route["family_shadow_only"])
@@ -480,8 +477,8 @@ def parse_args():
     parser.add_argument(
         "--agent-policy",
         type=str,
-        default="rule_v2",
-        choices=["rule_v2", "rule_v3_verified"],
+        default=PSCR_VERIFIED_POLICY,
+        choices=[PSCR_VERIFIED_POLICY, "rule_v2", "rule_v3_verified"],
         help="Agent policy label written into logs and debug traces.",
     )
     parser.add_argument(
@@ -1134,6 +1131,7 @@ def summarize_open6dor_agent_records(records):
     shadow_used_count_by_policy = {}
     rejected_count_by_policy = {}
     conditional_verify_count_by_policy = {}
+    pscr_block_reason_distribution = {}
     rule_v3_block_reason_distribution = {}
     mode_distribution = {}
     family_distribution = {}
@@ -1172,7 +1170,9 @@ def summarize_open6dor_agent_records(records):
         if decision == "use_stage5_conditional_verify":
             conditional_verify_count_by_policy[policy] = conditional_verify_count_by_policy.get(policy, 0) + 1
         agent_signals = record.get("agent_signals") or {}
-        block_reason = str(agent_signals.get("rule_v3_block_reason") or "none")
+        pscr_block_reason = str(agent_signals.get("pscr_block_reason") or "none")
+        pscr_block_reason_distribution[pscr_block_reason] = pscr_block_reason_distribution.get(pscr_block_reason, 0) + 1
+        block_reason = str(agent_signals.get("rule_v3_block_reason") or pscr_block_reason)
         rule_v3_block_reason_distribution[block_reason] = rule_v3_block_reason_distribution.get(block_reason, 0) + 1
         mode = str(record.get("stage5_mode") or "none")
         mode_distribution[mode] = mode_distribution.get(mode, 0) + 1
@@ -1241,8 +1241,15 @@ def summarize_open6dor_agent_records(records):
     summary["shadow_used_count_by_policy"] = shadow_used_count_by_policy
     summary["rejected_count_by_policy"] = rejected_count_by_policy
     summary["conditional_verify_count_by_policy"] = conditional_verify_count_by_policy
+    summary["pscr_fallback_override_count"] = sum(
+        1 for record in agent_records if (record.get("agent_signals") or {}).get("pscr_fallback_override")
+    )
+    summary["pscr_block_reason_distribution"] = pscr_block_reason_distribution
     summary["rule_v3_fallback_override_count"] = sum(
-        1 for record in agent_records if (record.get("agent_signals") or {}).get("rule_v3_allowed_by_fallback_override")
+        1
+        for record in agent_records
+        if (record.get("agent_signals") or {}).get("rule_v3_allowed_by_fallback_override")
+        or (record.get("agent_signals") or {}).get("pscr_fallback_override")
     )
     summary["rule_v3_block_reason_distribution"] = rule_v3_block_reason_distribution
     summary["reasoning_json_repaired_count"] = sum(1 for record in agent_records if record.get("reasoning_json_repaired"))
@@ -1344,7 +1351,7 @@ def process_dataset(task_dir):
     agent_decision = decide_open6dor_agent_action(
         stage5_enabled=False,
         orientation_mode="",
-        agent_policy=AGENT_OPTIONS.get("policy", "rule_v2"),
+        agent_policy=AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
         stage5_gate_reason="stage5_disabled",
         fallback_required=False,
         parser_confidence=None,
@@ -1646,7 +1653,7 @@ def process_dataset(task_dir):
                         agent_decision = {
                             "dataset": "open6dor",
                             "controller": "disabled",
-                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "policy_version": AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
                             "task_type": "manipulation",
                             "question_type_or_orientation_mode": stage5_gate.get("mode", ""),
                             "applicable": False,
@@ -1727,7 +1734,7 @@ def process_dataset(task_dir):
                         agent_decision = {
                             "dataset": "open6dor",
                             "controller": "disabled",
-                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "policy_version": AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
                             "task_type": "manipulation",
                             "question_type_or_orientation_mode": stage5_mode,
                             "applicable": bool(stage5_prediction and stage5_prediction.get("target_orientation")),
@@ -1781,7 +1788,7 @@ def process_dataset(task_dir):
                     }
                     auto_route = {
                         "controller": "agent_mode_off",
-                        "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                        "policy_version": AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
                         "dataset_hint": "open6dor",
                         "selected_dataset_agent": "disabled",
                         "selected_execution_mode": agent_verification.get("selected_execution_mode", "baseline_only"),
@@ -1807,7 +1814,7 @@ def process_dataset(task_dir):
                     agent_decision = decide_open6dor_agent_action(
                         stage5_enabled=bool(STAGE5_OPTIONS.get("enabled")),
                         orientation_mode=stage5_mode,
-                        agent_policy=AGENT_OPTIONS.get("policy", "rule_v2"),
+                        agent_policy=AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
                         stage5_gate_reason=stage5_gate.get("reason", ""),
                         fallback_required=bool(object_context.get("fallback_required")),
                         parser_confidence=(parsed_info or {}).get("parser_confidence"),
@@ -1953,7 +1960,7 @@ def process_dataset(task_dir):
                     else:
                         auto_route = {
                             "controller": "dataset_mode_fixed",
-                            "policy_version": AGENT_OPTIONS.get("policy", "rule_v2"),
+                            "policy_version": AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY),
                             "dataset_hint": "open6dor",
                             "selected_dataset_agent": agent_decision.get("controller"),
                             "selected_execution_mode": agent_verification.get(
@@ -2027,7 +2034,7 @@ def process_dataset(task_dir):
             "degraded_reason": reasoning_response.get("degraded_reason", ""),
             "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
             "agent_controller": agent_decision.get("controller"),
-            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
+            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY)),
             "agent_selected_dataset_agent": (auto_route or {}).get("selected_dataset_agent", "disabled"),
             "agent_route_reason": (auto_route or {}).get("route_reason", "agent_mode_off"),
             "agent_decision": agent_verification.get("final_decision", agent_decision.get("decision")),
@@ -2105,7 +2112,7 @@ def process_dataset(task_dir):
             "pipeline_mode": pipeline_mode,
             "stage5_enabled": bool(STAGE5_OPTIONS.get("enabled")),
             "agent_controller": agent_decision.get("controller"),
-            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", "rule_v2")),
+            "agent_policy": agent_decision.get("policy_version", AGENT_OPTIONS.get("policy", PSCR_VERIFIED_POLICY)),
             "agent_selected_dataset_agent": (auto_route or {}).get("selected_dataset_agent", "disabled"),
             "agent_route_reason": (auto_route or {}).get("route_reason", "agent_mode_off"),
             "agent_decision": agent_verification.get("final_decision", agent_decision.get("decision")),
@@ -3075,10 +3082,11 @@ if __name__ == "__main__":
         }
     )
     AGENT_OPTIONS.clear()
+    normalized_agent_policy = normalize_agent_policy(args.agent_policy)
     AGENT_OPTIONS.update(
         {
             "mode": args.agent_mode or ("dataset" if args.use_stage5_head else "off"),
-            "policy": args.agent_policy,
+            "policy": normalized_agent_policy,
             "save_trace": bool(args.agent_save_trace),
             "debug_dir": args.agent_debug_dir,
             "shadow_eval": bool(args.agent_shadow_eval),

@@ -129,3 +129,47 @@ python sofar/analysis/run_open6dor_subset_ablation.py --dataset-root /data/codin
 - 当前主结果口径：
   - `paper_core_120` 是 120-case Open6DOR 6DoF subset，不是 full benchmark。
   - official evaluator stdout: `6-dof pos acc=0.616666615277782`, `6-dof rot acc=0.24999997916666838`, `6-dof all acc=0.14999998750000104`, `valid_result_rate=1.0`。
+## 2026-05-10 统一 PSCR policy 使用方法
+
+上传文件夹：
+- `sofar/serve/`
+- `sofar/open6dor/`
+- `sofar/analysis/`
+- `tests/`
+- `baseline_stage5_tracker.md`
+- `baseline_stage5_todolist.json`
+- `当前代码地图与交接总表.md`
+- `交接操作.txt`
+
+服务器目标路径：
+- `/data/coding/SoFar`
+
+本地/服务器轻量测试命令：
+```bash
+cd /data/coding/SoFar
+python -m py_compile sofar/serve/semantic_orientation_agent.py sofar/open6dor/open6dor_perception.py sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_pscr_verified_agent.py
+python -m unittest tests.test_open6dor_pscr_verified_agent
+python -m unittest tests.test_open6dor_stage5_family_mapper
+python -m unittest tests.test_open6dor_ablation_runner
+```
+
+120-case baseline_only vs pscr_verified 对照命令：
+```bash
+cd /data/coding/SoFar
+python sofar/analysis/run_open6dor_subset_ablation.py \
+  --dataset-root /data/coding/SoFar/datasets/open6dor_v2 \
+  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json \
+  --output-root /data/coding/SoFar/output/open6dor_paper_core_120_pscr_verified \
+  --methods baseline_only,pscr_verified \
+  --run-id paper_core_120_baseline_vs_pscr_verified \
+  --speed-profile conservative \
+  --stage5-upright-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_upright_expert_round2_semanticfix/stage5_pilot_best.pth \
+  --stage5-flat-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_flat_expert_round2_scratch/stage5_pilot_best.pth \
+  --stage5-plug-expert-checkpoint /data/coding/SoFar/output/stage5_open6dor_plug_expert_round2_scratch/stage5_pilot_best.pth
+```
+
+回传文件：
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/ablation_summary.json`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/ablation_summary.csv`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/error_breakdown.csv`
+- 失败时回传对应 method 子目录下的 `run_stdout.txt` / `run_stderr.txt` / `eval_stdout.txt` / `eval_stderr.txt`

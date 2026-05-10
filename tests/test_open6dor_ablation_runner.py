@@ -41,10 +41,10 @@ class Open6DORAblationRunnerTest(unittest.TestCase):
         self.assertNotIn("--stage5-flat-expert-checkpoint", baseline["command"])
         self.assertNotIn("--stage5-plug-expert-checkpoint", baseline["command"])
 
-        safe = build_method_command("pscr_rule_v2_safe", args, Path("/tmp/tasks.json"))
+        safe = build_method_command("pscr_verified", args, Path("/tmp/tasks.json"))
         self.assertIn("--use-stage5-head", safe["command"])
         self.assertIn("--agent-policy", safe["command"])
-        self.assertIn("rule_v2", safe["command"])
+        self.assertIn("pscr_verified", safe["command"])
         self.assertIn("--agent-shadow-eval", safe["command"])
 
     def test_baseline_only_does_not_force_agent_mode_when_unsupported(self):

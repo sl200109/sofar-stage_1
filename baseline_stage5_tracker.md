@@ -831,3 +831,27 @@
   - `unknown family` 预期会下降
   - `part_axis_left_right` 现在可以被显式看见并计数，但默认仍是安全的 `shadow-only`
   - 下一步需要先跑 `20/50-case smoke`，确认 family distribution 与 `rule_v3` 的实际命中分布
+
+## 33. 2026-05-10 统一 PSCR policy 为 pscr_verified
+- 本轮本地改动文件：
+  - `sofar/serve/semantic_orientation_agent.py`
+  - `sofar/open6dor/open6dor_perception.py`
+  - `sofar/analysis/run_open6dor_subset_ablation.py`
+  - `tests/test_open6dor_pscr_verified_agent.py`
+  - `tests/test_open6dor_stage5_family_mapper.py`
+  - `tests/test_open6dor_ablation_runner.py`
+- 已实现内容：
+  - 不再同时维护 `rule_v2` / `rule_v3_verified` 两套主 PSCR rule
+  - 最终方法统一为 `pscr_verified`
+  - `fallback_required` 不再在 route 阶段阻断 checkpoint 查找
+  - `pscr_verified` 通过 verifier 控制 Stage5 注入
+  - `part_axis_left_right` 无 checkpoint 仍不能 inject
+  - ablation runner 主 method 简化为 `baseline_only,pscr_verified`
+- 本地验证状态：
+  - `python -m py_compile sofar/serve/semantic_orientation_agent.py sofar/open6dor/open6dor_perception.py sofar/analysis/run_open6dor_subset_ablation.py tests/test_open6dor_pscr_verified_agent.py`
+  - `python -m unittest tests.test_open6dor_pscr_verified_agent`
+  - `python -m unittest tests.test_open6dor_stage5_family_mapper`
+  - `python -m unittest tests.test_open6dor_ablation_runner`
+  - 均已通过
+- 下一步：
+  - 服务器跑 `baseline_only,pscr_verified` 的 120-case same-subset 对照
