@@ -855,3 +855,24 @@
   - 均已通过
 - 下一步：
   - 服务器跑 `baseline_only,pscr_verified` 的 120-case same-subset 对照
+
+## 34. 2026-05-12 Open6DOR oracle / axis error 诊断脚本
+- 本轮本地改动文件：
+  - `sofar/analysis/analyze_open6dor_oracle_and_axis_errors.py`
+  - `tests/test_analyze_open6dor_oracle_and_axis_errors.py`
+  - `交接操作.txt`
+- 已实现内容：
+  - 从已有 `baseline_only` / `pscr_verified` run-root 读取 `result.json` 与 `eval_6dof.json`
+  - 输出 method metrics、oracle union、family/mode/semantic-status breakdown
+  - 输出 gated-global 指标，用于判断只在某类样本注入时是否超过 baseline
+  - 输出 x/y/z/xy/xyz sign-flip ablation
+  - 不修改 `eval_open6dor.py`，不跑 Qwen，不训练模型，不改原始结果
+- 本地验证状态：
+  - `python -m py_compile sofar/analysis/analyze_open6dor_oracle_and_axis_errors.py tests/test_analyze_open6dor_oracle_and_axis_errors.py`
+  - `python -m unittest tests.test_analyze_open6dor_oracle_and_axis_errors`
+  - 均已通过
+- 本地 120-case 诊断结果：
+  - baseline: pos=0.6167, rot=0.2750, all=0.2000
+  - pscr_verified: pos=0.6167, rot=0.2250, all=0.1333
+  - oracle union: pos=0.6167, rot=0.3333, all=0.2167
+  - semantic gate `top_points_down`: gated-global rot=0.2917，高于 baseline rot=0.2750

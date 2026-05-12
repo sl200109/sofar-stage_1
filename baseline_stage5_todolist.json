@@ -469,6 +469,13 @@
                       "status":  "done",
                       "title":  "统一 Open6DOR PSCR agent policy 为 pscr_verified",
                       "notes":  "已合并 rule_v2/rule_v3 为唯一 PSCR policy，保留 verifier-gated injection，修复 fallback route early-return。"
+                  },
+                  {
+                      "id":  "open6dor_oracle_axis_error_analysis",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "新增 Open6DOR oracle 与 axis error 诊断脚本",
+                      "notes":  "已新增 analyze_open6dor_oracle_and_axis_errors.py，用于基于已有 baseline/pscr 结果输出 oracle union、family/mode/semantic breakdown、gated-global 指标与 sign-flip ablation；本地 py_compile 和 unittest 已通过。"
                   }
               ]
 }

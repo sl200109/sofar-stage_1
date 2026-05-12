@@ -173,3 +173,43 @@ python sofar/analysis/run_open6dor_subset_ablation.py \
 - `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/ablation_summary.csv`
 - `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/error_breakdown.csv`
 - 失败时回传对应 method 子目录下的 `run_stdout.txt` / `run_stderr.txt` / `eval_stdout.txt` / `eval_stderr.txt`
+## 2026-05-12 Open6DOR oracle / axis error 诊断脚本
+
+上传文件夹：
+- `sofar/analysis/`
+- `tests/`
+- `baseline_stage5_tracker.md`
+- `baseline_stage5_todolist.json`
+- `当前代码地图与交接总表.md`
+- `交接操作.txt`
+
+服务器目标路径：
+- `/data/coding/SoFar`
+
+轻量验证命令：
+```bash
+cd /data/coding/SoFar
+python -m py_compile sofar/analysis/analyze_open6dor_oracle_and_axis_errors.py tests/test_analyze_open6dor_oracle_and_axis_errors.py
+python -m unittest tests.test_analyze_open6dor_oracle_and_axis_errors
+```
+
+基于已完成 120-case 结果做 oracle / gating / sign-flip 诊断，不重跑模型：
+```bash
+cd /data/coding/SoFar
+python sofar/analysis/analyze_open6dor_oracle_and_axis_errors.py \
+  --run-root /data/coding/SoFar/output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified \
+  --methods baseline_only,pscr_verified \
+  --task-list /data/coding/SoFar/paper_results/open6dor_short_experiments_20260429/open6dor_paper_core_120_seed42_task_list.json
+```
+
+回传文件：
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/oracle_summary.json`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/oracle_summary.csv`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/family_breakdown.csv`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/mode_breakdown.csv`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/semantic_status_breakdown.csv`
+- `output/open6dor_paper_core_120_pscr_verified/paper_core_120_baseline_vs_pscr_verified/oracle_axis_analysis/sign_flip_ablation.csv`
+
+失败时回传：
+- 终端完整报错
+- `oracle_axis_analysis/` 下已生成的文件
