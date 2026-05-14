@@ -21,6 +21,7 @@ class _Args:
     stage5_upright_expert_checkpoint = "/tmp/upright.pth"
     stage5_flat_expert_checkpoint = "/tmp/flat.pth"
     stage5_plug_expert_checkpoint = "/tmp/plug.pth"
+    stage5_part_axis_expert_checkpoint = None
 
 
 class Open6DORAblationRunnerTest(unittest.TestCase):

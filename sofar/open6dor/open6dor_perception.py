@@ -18,7 +18,19 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from serve import pointso as orientation
+try:
+    from serve import pointso as orientation
+except ModuleNotFoundError as exc:
+    _POINTSO_IMPORT_ERROR = exc
+
+    class _MissingPointSO:
+        def get_model(self):
+            raise _POINTSO_IMPORT_ERROR
+
+        def pred_orientation(self, *args, **kwargs):
+            raise _POINTSO_IMPORT_ERROR
+
+    orientation = _MissingPointSO()
 from open6dor.eval_subset_sampling import classify_task_family as classify_eval_task_family
 from open6dor.utils import (
     build_orientation_template_hints,
@@ -29,7 +41,17 @@ from open6dor.utils import (
     resolve_orientation_template,
 )
 from serve.scene_graph import build_open6dor_lightweight_scene_graph, open6dor_scene_graph
-from segmentation import sam, florence as detection
+try:
+    from segmentation import sam, florence as detection
+except ModuleNotFoundError as exc:
+    _SEGMENTATION_IMPORT_ERROR = exc
+
+    class _MissingSegmentationModule:
+        def __getattr__(self, name):
+            raise _SEGMENTATION_IMPORT_ERROR
+
+    sam = _MissingSegmentationModule()
+    detection = _MissingSegmentationModule()
 from serve.utils import generate_rotation_matrix, get_point_cloud_from_rgbd
 from serve import runtime_paths
 from serve.batch_logging import setup_timestamped_logging, write_json_outputs
@@ -51,7 +73,13 @@ from serve.stage4_point_data import (
     sample_points,
     save_stage4_cache,
 )
-from serve.stage5_inference import predict_from_stage4_dir
+try:
+    from serve.stage5_inference import predict_from_stage4_dir
+except ModuleNotFoundError as exc:
+    _STAGE5_IMPORT_ERROR = exc
+
+    def predict_from_stage4_dir(*args, **kwargs):
+        raise _STAGE5_IMPORT_ERROR
 from serve.semantic_orientation_agent import (
     decide_auto_agent_route,
     decide_open6dor_agent_action,
@@ -79,7 +107,18 @@ DEFAULT_STAGE5_EXPERT_ROUTING = "off"
 STAGE5_TASK_FAMILY_UPRIGHT = "upright_vertical"
 STAGE5_TASK_FAMILY_FLAT = "flat_upside_down_lying_flat"
 STAGE5_TASK_FAMILY_PLUG = "plug_cap_sideways"
+STAGE5_TASK_FAMILY_PART_AXIS = "part_axis_left_right"
 STAGE5_TASK_FAMILY_UNKNOWN = "unknown"
+PART_AXIS_LEFT_RIGHT_MODES = {
+    "handle_left",
+    "handle_right",
+    "blade_right",
+    "blades_right",
+    "ballpoint_right",
+    "clasp_right",
+    "spout_right",
+    "bulb_right_handle_left",
+}
 GENERIC_MODE_HINTS = {
     "upright": ["top", "bottom", "handle", "opening"],
     "upright_lens_forth": ["top", "bottom", "lens", "front"],
@@ -184,6 +223,8 @@ def infer_open6dor_stage5_task_family(orientation_mode):
         return STAGE5_TASK_FAMILY_UPRIGHT
     if family == "flat_upside_down_lying_flat" or mode == "flat":
         return STAGE5_TASK_FAMILY_FLAT
+    if family == "part_axis_left_right" or mode in PART_AXIS_LEFT_RIGHT_MODES:
+        return STAGE5_TASK_FAMILY_PART_AXIS
     if family in {"plug_right", "cap_clip_sideways"}:
         return STAGE5_TASK_FAMILY_PLUG
     return STAGE5_TASK_FAMILY_UNKNOWN
@@ -222,6 +263,8 @@ def resolve_open6dor_stage5_checkpoint_route(
         "checkpoint_path": shared_checkpoint if routing_policy == "off" else None,
         "checkpoint_source": "shared_default" if routing_policy == "off" else "none",
         "route_reason": "expert_routing_off" if routing_policy == "off" else "",
+        "family_checkpoint_available": bool(routing_policy == "off" and shared_checkpoint),
+        "family_shadow_only": False,
         "signals": {
             "orientation_mode": _normalize_stage5_mode_label(orientation_mode),
             "task_family": family,
@@ -233,28 +276,44 @@ def resolve_open6dor_stage5_checkpoint_route(
         },
     }
     if routing_policy == "off":
+        if family == STAGE5_TASK_FAMILY_PART_AXIS:
+            route["checkpoint_path"] = None
+            route["checkpoint_source"] = "none"
+            route["route_reason"] = "part_axis_left_right_no_checkpoint_shadow_only"
+            route["family_checkpoint_available"] = False
+            route["family_shadow_only"] = True
         return route
 
     if fallback_required:
         route["route_reason"] = "fallback_required"
+        route["family_checkpoint_available"] = False
         return route
     if not stage4_cache_available:
         route["route_reason"] = "stage4_cache_missing"
+        route["family_checkpoint_available"] = False
         return route
     if family == STAGE5_TASK_FAMILY_UNKNOWN:
         route["route_reason"] = "unknown_task_family"
+        route["family_checkpoint_available"] = False
         return route
 
     expert_checkpoints = STAGE5_OPTIONS.get("expert_checkpoints") or {}
     selected_checkpoint = _optional_path_string(expert_checkpoints.get(family))
     if not selected_checkpoint:
-        route["route_reason"] = f"missing_{family}_expert_checkpoint"
+        if family == STAGE5_TASK_FAMILY_PART_AXIS:
+            route["route_reason"] = "part_axis_left_right_no_checkpoint_shadow_only"
+            route["family_shadow_only"] = True
+        else:
+            route["route_reason"] = f"missing_{family}_expert_checkpoint"
+        route["family_checkpoint_available"] = False
         return route
 
     route["checkpoint_path"] = selected_checkpoint
     route["checkpoint_source"] = "family_specific"
-    if selected_checkpoint == shared_checkpoint:
+    if family != STAGE5_TASK_FAMILY_PART_AXIS and selected_checkpoint == shared_checkpoint:
         route["checkpoint_source"] = "family_default_shared"
+    route["family_checkpoint_available"] = True
+    route["family_shadow_only"] = False
     route["route_reason"] = f"{family}_expert"
     return route
 
@@ -388,6 +447,12 @@ def parse_args():
         type=str,
         default=None,
         help="Optional override for the plug/cap/sideways expert checkpoint.",
+    )
+    parser.add_argument(
+        "--stage5-part-axis-expert-checkpoint",
+        type=str,
+        default=None,
+        help="Optional override for the part-axis left/right expert checkpoint.",
     )
     parser.add_argument(
         "--agent-mode",
@@ -1108,6 +1173,8 @@ def _attach_stage5_route_metadata(prediction, route):
     payload["checkpoint_source"] = route.get("checkpoint_source")
     payload["checkpoint_route_reason"] = route.get("route_reason")
     payload["checkpoint_route_signals"] = route.get("signals", {})
+    payload["family_checkpoint_available"] = route.get("family_checkpoint_available")
+    payload["family_shadow_only"] = route.get("family_shadow_only")
     if route.get("checkpoint_path") and not payload.get("checkpoint_path"):
         payload["checkpoint_path"] = route.get("checkpoint_path")
     return payload
@@ -1650,11 +1717,20 @@ def process_dataset(task_dir):
                         part_score=stage4_signals.get("part_score"),
                         fallback_required=bool(object_context.get("fallback_required")),
                     )
+                    if stage5_checkpoint_route.get("family_shadow_only") and not stage5_checkpoint_route.get("checkpoint_path"):
+                        agent_decision["decision"] = "skip_stage5_due_to_checkpoint_routing"
+                        agent_decision["decision_reason"] = stage5_checkpoint_route.get("route_reason")
+                        agent_decision["selected_execution_mode"] = "baseline_only"
+                        agent_decision["selected_actions"] = ["fallback_to_baseline_reasoning"]
+                        agent_decision["stage5_allowed"] = False
+                        agent_decision["fallback_to_baseline"] = True
                     agent_decision["agent_signals"] = {
                         **(agent_decision.get("agent_signals") or {}),
                         "stage5_task_family": stage5_checkpoint_route.get("task_family"),
                         "stage5_checkpoint_route_reason": stage5_checkpoint_route.get("route_reason"),
                         "stage5_checkpoint_source": stage5_checkpoint_route.get("checkpoint_source"),
+                        "family_checkpoint_available": stage5_checkpoint_route.get("family_checkpoint_available"),
+                        "family_shadow_only": stage5_checkpoint_route.get("family_shadow_only"),
                     }
 
                     should_run_stage5 = agent_decision.get("decision") in {
@@ -2840,6 +2916,9 @@ if __name__ == "__main__":
     plug_expert_checkpoint = _optional_path_string(args.stage5_plug_expert_checkpoint)
     if not plug_expert_checkpoint:
         plug_expert_checkpoint = _optional_path_string(runtime_paths.stage5_open6dor_plug_checkpoint_path())
+    part_axis_expert_checkpoint = _optional_path_string(args.stage5_part_axis_expert_checkpoint)
+    if not part_axis_expert_checkpoint:
+        part_axis_expert_checkpoint = _optional_path_string(runtime_paths.stage5_open6dor_part_axis_checkpoint_path())
     STAGE5_OPTIONS.clear()
     STAGE5_OPTIONS.update(
         {
@@ -2853,6 +2932,7 @@ if __name__ == "__main__":
                 STAGE5_TASK_FAMILY_UPRIGHT: upright_expert_checkpoint,
                 STAGE5_TASK_FAMILY_FLAT: flat_expert_checkpoint,
                 STAGE5_TASK_FAMILY_PLUG: plug_expert_checkpoint,
+                STAGE5_TASK_FAMILY_PART_AXIS: part_axis_expert_checkpoint,
             },
         }
     )

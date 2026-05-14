@@ -16,6 +16,7 @@ ENV_STAGE5_SPATIALBENCH_CKPT = "SOFAR_STAGE5_SPATIALBENCH_CKPT"
 ENV_STAGE5_OPEN6DOR_UPRIGHT_CKPT = "SOFAR_STAGE5_OPEN6DOR_UPRIGHT_CKPT"
 ENV_STAGE5_OPEN6DOR_FLAT_CKPT = "SOFAR_STAGE5_OPEN6DOR_FLAT_CKPT"
 ENV_STAGE5_OPEN6DOR_PLUG_CKPT = "SOFAR_STAGE5_OPEN6DOR_PLUG_CKPT"
+ENV_STAGE5_OPEN6DOR_PART_AXIS_CKPT = "SOFAR_STAGE5_OPEN6DOR_PART_AXIS_CKPT"
 
 _DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -133,6 +134,10 @@ def stage5_open6dor_flat_checkpoint_path() -> Path | None:
 
 def stage5_open6dor_plug_checkpoint_path() -> Path | None:
     return _optional_env_path(ENV_STAGE5_OPEN6DOR_PLUG_CKPT, base=sofar_root())
+
+
+def stage5_open6dor_part_axis_checkpoint_path() -> Path | None:
+    return _optional_env_path(ENV_STAGE5_OPEN6DOR_PART_AXIS_CKPT, base=sofar_root())
 
 
 def open6dor_dataset_dir() -> Path:

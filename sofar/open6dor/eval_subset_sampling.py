@@ -26,13 +26,14 @@ FLAT_MODES = {
 PLUG_RIGHT_MODES = {
     "plug_right",
     "plug_left",
+    "prong_right",
+}
+PART_AXIS_LEFT_RIGHT_MODES = {
     "handle_right",
     "handle_left",
-    "handle_right_jaw_left",
     "blade_right",
     "blades_right",
     "bulb_right_handle_left",
-    "prong_right",
     "spout_right",
     "ballpoint_right",
     "clasp_right",
@@ -78,6 +79,8 @@ def classify_task_family(orientation_mode: Any) -> str:
         return "upright_vertical"
     if mode in FLAT_MODES:
         return "flat_upside_down_lying_flat"
+    if mode in PART_AXIS_LEFT_RIGHT_MODES:
+        return "part_axis_left_right"
     if mode in PLUG_RIGHT_MODES:
         return "plug_right"
     if mode in CAP_CLIP_SIDEWAYS_MODES:
@@ -86,7 +89,7 @@ def classify_task_family(orientation_mode: Any) -> str:
         return "upright_vertical"
     if "upside_down" in mode or mode.startswith("lying_"):
         return "flat_upside_down_lying_flat"
-    if any(token in mode for token in ("plug_", "handle_", "blade_", "prong_", "spout_", "ballpoint_", "clasp_")):
+    if any(token in mode for token in ("plug_", "prong_")):
         return "plug_right"
     if any(token in mode for token in ("cap_", "clip_", "sideways", "_forth", "_far")):
         return "cap_clip_sideways"

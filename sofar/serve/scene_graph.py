@@ -1,6 +1,18 @@
 import os
 import numpy as np
-from serve import pointso
+try:
+    from serve import pointso
+except ModuleNotFoundError as exc:
+    _POINTSO_IMPORT_ERROR = exc
+
+    class _MissingPointSO:
+        def get_model(self):
+            raise _POINTSO_IMPORT_ERROR
+
+        def pred_orientation(self, *args, **kwargs):
+            raise _POINTSO_IMPORT_ERROR
+
+    pointso = _MissingPointSO()
 from serve.utils import remove_outliers
 from open6dor.utils import canonical_object_key, normalize_object_name, resolve_orientation_template, load_orientation_templates
 

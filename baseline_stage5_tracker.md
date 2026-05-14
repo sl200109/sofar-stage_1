@@ -764,3 +764,92 @@
   - 这一步只补 evaluator 闭环与 same-subset ablation runner
   - 不改 Stage5 policy / agent policy / evaluator 公式 / 训练代码
   - 默认交接与 smoke 命令均限制为 `--max-tasks 20` 或 `50`，不在本地阶段直接跑完整 `400-case`
+
+## 31. 2026-05-12 Part-axis Expert + Semantic-Safe Gate Plan
+- 当前 `paper_core_120` 中 `part_axis_left_right` 有 34 个任务，现有诊断显示该 family 的 Stage5 used=0。
+- 该 family 最符合 PSCR 的 part-aware 创新点：关键功能部件决定语义朝向。
+- 本地新增 `part_axis_left_right` dataset builder，用于从真实 Stage4 cache 构建 part-axis expert 训练 manifest。
+- 本地新增 part-axis expert routing test，确保无 part-axis checkpoint 时不 inject、不会复用 plug expert。
+- 本地新增 part-axis geometric consistency helper，用于 diagnosis / safe gate 的轻量一致性判断。
+- 本地新增 `pscr_semantic_safe` hybrid derivation，默认只用 `top_points_down` 覆盖 baseline result。
+- 下一步服务器训练 `part_axis_left_right` expert checkpoint，并评估 `baseline_only / pscr_verified / pscr_semantic_safe / pscr_semantic_safe_plus_part_axis`。
+- 本地验证只包含 py_compile 和 mock unittest；尚未产生任何 part-axis 训练结果或 official evaluator 指标。
+
+## 32. 2026-05-13 Part-axis subset400_refilled expert 已训练，进入 pscr-only official eval
+- 服务器进展来自当前回传，训练日志/输出文件尚未同步到本地复核。
+- `paper_core_120` 初始 part-axis dataset：32 samples，split=25/3/4。
+- `subset400` 首轮 part-axis dataset：58 samples，`missing_stage4_cache_count=32`。
+- 补齐 subset400 Stage3/Stage4 cache 后，`subset400_refilled` dataset：
+  - `total_samples=87`
+  - `train_size=69`
+  - `val_size=8`
+  - `test_size=10`
+  - `missing_stage4_cache_count=0`
+  - `missing_part_points_count=6`
+- 服务器已训练 part-axis expert：
+  - `/data/coding/SoFar/output/stage5_open6dor_part_axis_expert_round1_subset400_refilled/stage5_pilot_best.pth`
+  - `best_val_loss=0.012985`
+  - `final_test_loss=0.070467`
+  - `final_test_mean_cosine=0.852286`
+  - `skipped_bad_batches=0`
+- 昨日 baseline_only 120-case 已有结果，不再重复跑 baseline：
+  - `6DoF pos=0.6167`
+  - `6DoF rot=0.2750`
+  - `6DoF overall=0.2000`
+- 当前服务器下一步只跑 `pscr_verified` + part-axis checkpoint，然后手动对比昨日 baseline。
+- 尚未产生 part-axis expert 接入后的 official evaluator 结果；不能声称指标已提升。
+
+## 33. 2026-05-13 pscr_mode_prior_safe 派生入口已实现
+- 本地修改 `sofar/analysis/derive_open6dor_pscr_semantic_safe_results.py`，默认输出方法改为 `pscr_mode_prior_safe`。
+- 新逻辑默认复制 baseline result，只在安全规则通过时修改 `target_orientation`：
+  - `part_axis_left_right`：`*_right` 必须 `x > 0` 且 `abs(x)` 为主导轴；`*_left` 必须 `x < 0` 且 `abs(x)` 为主导轴；不满足则保持 baseline。
+  - baseline 缺 `target_orientation` 且 mode 明确为 part-axis left/right 时，可用 mode-prior 模板补齐。
+  - `lying_flat / upside_down` 不再 broad injection；仅在 `top_points_down / bottom_down_consistent` 等显式安全状态下注入 Stage5。
+- 脚本不读取 `eval_6dof.json`、不读取 official pass/fail、不改 evaluator。
+- 新增 `--baseline-dir / --pscr-dir`，支持复用旧 baseline run 与新 pscr-only run 派生同一个 `pscr_mode_prior_safe` 输出。
+- 输出：
+  - `pscr_mode_prior_safe/eval_dataset_root`
+  - `pscr_mode_prior_safe/selection.json`
+  - 兼容保留 `pscr_mode_prior_safe/hybrid_selection.json`
+- 本地验证已通过：
+  - `python -m py_compile sofar/analysis/derive_open6dor_pscr_semantic_safe_results.py tests/test_derive_open6dor_pscr_semantic_safe_results.py`
+  - `python -m unittest tests.test_derive_open6dor_pscr_semantic_safe_results`
+  - `python -m unittest tests.test_open6dor_part_axis_expert_routing tests.test_open6dor_stage5_family_mapper tests.test_open6dor_ablation_runner`
+- 尚未产生服务器 official evaluator 结果；下一步需在服务器跑 `pscr_verified` 后派生 `pscr_mode_prior_safe` 并评估。
+
+## 34. 2026-05-13 ICPC Mode-Prior Orientation Completion
+- 当前结果显示 PSCR + part-axis expert 未超过 baseline：
+  - `baseline_only`: 6DoF pos=0.6167, rot=0.2750, overall=0.2000
+  - `PSCR + part-axis expert`: 6DoF pos=0.6083, rot=0.2417, overall=0.1417
+- 新增 `Instruction-Constrained Pose Completion, ICPC`，代码方法名固定为 `icpc_mode_prior`。
+- ICPC is a baseline-preserving orientation completion method, not PSCR, not Stage5, and not semantic-safe gating.
+- ICPC 只根据 task path / orientation_mode / instruction 中的显式姿态约束补 `target_orientation`。
+- ICPC 不调用 Qwen、不训练、不改 `target_position`、不读取 evaluator pass/fail 或 GT。
+- 新脚本：
+  - `analysis/derive_open6dor_icpc_mode_prior_results.py`
+- 新测试：
+  - `tests/test_derive_open6dor_icpc_mode_prior_results.py`
+- 目标是在保持 baseline position 的前提下补全显式语义朝向，验证 rotation 和 6DoF overall 是否提升。
+- 尚未产生 ICPC official evaluator 指标；下一步只需服务器派生 `icpc_mode_prior` 并运行 official evaluator。
+
+## 35. 2026-05-14 ICTC Transform-Matrix Orientation Completion
+- ICPC target_orientation patch 未改变 official evaluator 指标，因为 `open6dor/eval_open6dor.py` 的 6DoF rotation 实际只读取 `result.json["transform_matrix"]`。
+- 新增 `Instruction-Constrained Transform Completion, ICTC`，代码方法名固定为 `ictc_transform_prior`。
+- ICTC is a baseline-preserving transform_matrix rotation completion method. It is not PSCR, not Stage5, not semantic-safe gating, and not the old ICPC target_orientation patch.
+- ICTC 只根据 task path / orientation_mode 的显式姿态约束修改 `transform_matrix[:3,:3]`。
+- ICTC 不调用 Qwen、不训练、不改 `target_position`、不改 `transform_matrix` translation、不读取 evaluator pass/fail 或 GT。
+- 新脚本：
+  - `analysis/derive_open6dor_ictc_transform_prior_results.py`
+- 新测试：
+  - `tests/test_derive_open6dor_ictc_transform_prior_results.py`
+- 支持 profile：
+  - `part_axis_only`
+  - `flat_upright_only`
+  - `all_safe`
+  - `yaw_only_part_axis`
+- 支持 matrix template：
+  - `canonical`
+  - `yaw_only`
+  - `z_preserve` 参数保留但未实现，使用时报错
+- 目标是在保持 baseline position 和 transform translation 的前提下提升 rotation 和 6DoF overall。
+- 尚未产生 ICTC official evaluator 指标；下一步只需服务器派生 `ictc_transform_prior` 并运行 official evaluator。

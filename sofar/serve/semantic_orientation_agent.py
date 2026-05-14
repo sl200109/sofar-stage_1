@@ -37,6 +37,14 @@ OPEN6DOR_CONDITIONAL_VERIFY_MODES = {
     "ballpoint_right",
     "clasp_right",
 }
+OPEN6DOR_PART_AXIS_RIGHT_MODES = {
+    "handle_right",
+    "blade_right",
+    "blades_right",
+    "ballpoint_right",
+    "clasp_right",
+    "spout_right",
+}
 OPEN6DOR_SEMANTIC_AXIS_VERIFY_MODES = {"lying_flat"}
 OPEN6DOR_SEMANTIC_AXIS_MIN_COSINE = 0.85
 OPEN6DOR_LEGACY_VERIFIER_RULE_VERSION = "rule_v2_legacy"
@@ -581,6 +589,12 @@ def _open6dor_mode_threshold(orientation_mode: str) -> Optional[tuple[str, float
         return ("z_min", 0.35)
     if mode == "plug_right":
         return ("x_min", 0.35)
+    if mode in OPEN6DOR_PART_AXIS_RIGHT_MODES:
+        return ("x_min", 0.35)
+    if mode == "handle_left":
+        return ("x_max", -0.35)
+    if mode == "bulb_right_handle_left":
+        return ("always_reject", 0.0)
     if mode == "lying_flat":
         return ("z_abs_max", 0.45)
     return None
@@ -656,6 +670,12 @@ def _open6dor_verifier_debug(
         elif rule == "x_min":
             old_rule_pass = x >= value
             old_rule_reason = f"x={x:.4f} threshold={value:.2f}"
+        elif rule == "x_max":
+            old_rule_pass = x <= value
+            old_rule_reason = f"x={x:.4f} threshold<={value:.2f}"
+        elif rule == "always_reject":
+            old_rule_pass = False
+            old_rule_reason = "part_axis_left_right_uncertain_mode"
         else:
             old_rule_pass = abs(z) <= value
             old_rule_reason = f"|z|={abs(z):.4f} threshold={value:.2f}"

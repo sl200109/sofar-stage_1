@@ -31,6 +31,25 @@ dist/
 *.log
 *.tmp
 
+
+# experiment outputs
+output/
+output_*/
+analysis/
+sofar/open6dor_task_meta_400r/
+sofar/open6dor_task_meta_400r.tar.gz
+sofar/open6dor_task_meta_400r.zip
+
+# python/cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# large logs / temp
+*.log
+*.tmp
+
+
 codex_history.md
 AGENTS.md
 

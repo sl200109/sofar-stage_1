@@ -18,6 +18,7 @@ if str(ROOT_DIR) not in sys.path:
 
 SUPPORTED_METHODS = {
     "baseline_only",
+    "pscr_verified",
     "pscr_rule_v2_safe",
     "pscr_rule_v3_verified",
     "pscr_shadow",
@@ -74,6 +75,7 @@ def parse_args():
     parser.add_argument("--stage5-upright-expert-checkpoint", type=str, default=None)
     parser.add_argument("--stage5-flat-expert-checkpoint", type=str, default=None)
     parser.add_argument("--stage5-plug-expert-checkpoint", type=str, default=None)
+    parser.add_argument("--stage5-part-axis-expert-checkpoint", type=str, default=None)
     parser.add_argument("--max-tasks", type=int, default=None)
     parser.add_argument("--task-slice-mode", type=str, default="first")
     parser.add_argument("--task-slice-seed", type=int, default=42)
@@ -237,7 +239,7 @@ def build_method_command(method, args, effective_task_list_path):
             notes.append("baseline_only_agent_mode_disabled")
         else:
             notes.append("baseline_only_no_stage5_no_agent_mode")
-    elif method in {"pscr_rule_v2_safe", "pscr_shadow"}:
+    elif method in {"pscr_verified", "pscr_rule_v2_safe", "pscr_shadow"}:
         command += [
             "--use-stage5-head",
             "--stage5-expert-routing",
@@ -245,7 +247,7 @@ def build_method_command(method, args, effective_task_list_path):
             "--agent-mode",
             "dataset",
             "--agent-policy",
-            "rule_v2",
+            "pscr_verified" if method == "pscr_verified" else "rule_v2",
             "--agent-save-trace",
             "--agent-shadow-eval",
         ]
@@ -279,6 +281,7 @@ def build_method_command(method, args, effective_task_list_path):
         ("--stage5-upright-expert-checkpoint", args.stage5_upright_expert_checkpoint),
         ("--stage5-flat-expert-checkpoint", args.stage5_flat_expert_checkpoint),
         ("--stage5-plug-expert-checkpoint", args.stage5_plug_expert_checkpoint),
+        ("--stage5-part-axis-expert-checkpoint", args.stage5_part_axis_expert_checkpoint),
     ]
     if "--use-stage5-head" in command:
         for flag, value in checkpoint_args:
