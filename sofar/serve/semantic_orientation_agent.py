@@ -4,7 +4,12 @@ import math
 from typing import Any, Dict, Optional
 
 
-POLICY_VERSION = "rule_v2"
+PSCR_VERIFIED_POLICY = "pscr_verified"
+POLICY_VERSION = PSCR_VERIFIED_POLICY
+LEGACY_POLICY_ALIASES = {
+    "rule_v2": PSCR_VERIFIED_POLICY,
+    "rule_v3_verified": PSCR_VERIFIED_POLICY,
+}
 
 SPATIALBENCH_STAGE5_CONFIDENCE_THRESHOLD = 0.55
 OPEN6DOR_STAGE5_CONFIDENCE_THRESHOLD = 0.55
@@ -102,6 +107,11 @@ def _normalize_mode_label(value: Any) -> str:
     return str(value or "").strip().lower().replace(" ", "_")
 
 
+def normalize_agent_policy(value: Any) -> str:
+    policy = str(value or PSCR_VERIFIED_POLICY).strip() or PSCR_VERIFIED_POLICY
+    return LEGACY_POLICY_ALIASES.get(policy, policy)
+
+
 def _spatialbench_prompt_variant(category: Any) -> str:
     return SPATIALBENCH_PROMPT_VARIANTS.get(str(category or "").strip(), "generic")
 
@@ -155,6 +165,7 @@ def _decision_payload(
     *,
     dataset: str,
     controller: str,
+    policy_version: str = POLICY_VERSION,
     task_type: str,
     question_type_or_mode: str,
     applicable: bool,
@@ -171,7 +182,7 @@ def _decision_payload(
     return {
         "dataset": dataset,
         "controller": controller,
-        "policy_version": POLICY_VERSION,
+        "policy_version": str(policy_version or POLICY_VERSION),
         "task_type": task_type,
         "question_type_or_orientation_mode": question_type_or_mode,
         "applicable": bool(applicable),
@@ -421,6 +432,7 @@ def decide_open6dor_agent_action(
     *,
     stage5_enabled: bool,
     orientation_mode: str,
+    agent_policy: str = POLICY_VERSION,
     stage5_gate_reason: str = "",
     fallback_required: bool = False,
     parser_confidence: Any = None,
@@ -430,12 +442,25 @@ def decide_open6dor_agent_action(
     part_ratio: Any = None,
     stage5_fallback_scene_graph_used: bool = False,
     shadow_enabled: bool = False,
+    task_family: str = "",
+    checkpoint_source: str = "",
+    checkpoint_available: bool = False,
+    checkpoint_route_reason: str = "",
+    checkpoint_route_policy: str = "",
 ) -> Dict[str, Any]:
+    policy_version = normalize_agent_policy(agent_policy)
     raw_confidence = _safe_float(parser_confidence, default=None)
     mode = _normalize_mode_label(orientation_mode)
     execution_band = infer_open6dor_execution_band(mode)
+    family = str(task_family or "").strip() or "unknown"
+    normalized_checkpoint_source = str(checkpoint_source or "").strip() or "none"
+    checkpoint_is_available = bool(checkpoint_available and normalized_checkpoint_source != "none")
+    pscr_block_reason = ""
     signals = {
+        "policy_version": policy_version,
+        "agent_policy": policy_version,
         "orientation_mode": mode,
+        "task_family": family,
         "stage5_gate_reason": stage5_gate_reason,
         "fallback_required": bool(fallback_required),
         "parser_confidence": raw_confidence,
@@ -447,12 +472,26 @@ def decide_open6dor_agent_action(
         "stage5_fallback_scene_graph_used": bool(stage5_fallback_scene_graph_used),
         "execution_band": execution_band,
         "shadow_enabled": bool(shadow_enabled),
+        "checkpoint_source": normalized_checkpoint_source,
+        "checkpoint_available": checkpoint_is_available,
+        "checkpoint_route_reason": str(checkpoint_route_reason or ""),
+        "checkpoint_route_policy": str(checkpoint_route_policy or ""),
+        "verifier_rule_version": "",
+        "verifier_decision_reason": "",
+        "pscr_fallback_override": False,
+        "pscr_block_reason": "",
+        "rule_v3_allowed_by_fallback_override": False,
+        "rule_v3_block_reason": "",
     }
 
     if not stage5_enabled:
+        pscr_block_reason = "stage5_disabled"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
         return _decision_payload(
             dataset="open6dor",
             controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
             task_type="manipulation",
             question_type_or_mode=mode,
             applicable=False,
@@ -466,16 +505,19 @@ def decide_open6dor_agent_action(
             agent_signals=signals,
         )
 
-    if fallback_required or not stage4_cache_available:
-        reason = "fallback_required" if fallback_required else "stage4_cache_missing"
+    if not stage4_cache_available:
+        pscr_block_reason = "missing_stage4_cache"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
         return _decision_payload(
             dataset="open6dor",
             controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
             task_type="manipulation",
             question_type_or_mode=mode,
             applicable=False,
-            decision="skip_stage5_due_to_fallback_required",
-            decision_reason=reason,
+            decision="skip_stage5_due_to_missing_stage4_cache",
+            decision_reason=pscr_block_reason,
             selected_execution_mode="baseline_only",
             selected_actions=["fallback_to_baseline_reasoning"],
             stage5_allowed=False,
@@ -484,15 +526,19 @@ def decide_open6dor_agent_action(
             agent_signals=signals,
         )
 
-    if raw_confidence is not None and raw_confidence < OPEN6DOR_STAGE5_CONFIDENCE_THRESHOLD:
+    if not mode:
+        pscr_block_reason = "missing_orientation_mode"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
         return _decision_payload(
             dataset="open6dor",
             controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
             task_type="manipulation",
             question_type_or_mode=mode,
             applicable=False,
-            decision="skip_stage5_due_to_low_confidence",
-            decision_reason=f"parser_confidence_below_{OPEN6DOR_STAGE5_CONFIDENCE_THRESHOLD:.2f}",
+            decision="skip_stage5_due_to_missing_orientation_mode",
+            decision_reason=pscr_block_reason,
             selected_execution_mode="baseline_only",
             selected_actions=["fallback_to_baseline_reasoning"],
             stage5_allowed=False,
@@ -501,82 +547,126 @@ def decide_open6dor_agent_action(
             agent_signals=signals,
         )
 
-    if execution_band == "direct_allow":
+    if family == "unknown":
+        pscr_block_reason = "unknown_family"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
         return _decision_payload(
             dataset="open6dor",
             controller=OPEN6DOR_CONTROLLER,
-            task_type="manipulation",
-            question_type_or_mode=mode,
-            applicable=True,
-            decision="use_stage5_direct",
-            decision_reason=stage5_gate_reason or "direct_allow_mode",
-            selected_execution_mode="stage5_direct_verified",
-            selected_actions=[
-                "run_stage5",
-                "verify_stage5_orientation",
-                "inject_if_verified",
-            ],
-            stage5_allowed=True,
-            use_orientation_prompt=False,
-            fallback_to_baseline=False,
-            agent_signals=signals,
-        )
-
-    if execution_band == "conditional_verify":
-        return _decision_payload(
-            dataset="open6dor",
-            controller=OPEN6DOR_CONTROLLER,
-            task_type="manipulation",
-            question_type_or_mode=mode,
-            applicable=True,
-            decision="use_stage5_conditional_verify",
-            decision_reason=stage5_gate_reason or "conditional_verify_mode",
-            selected_execution_mode="stage5_conditional_verified",
-            selected_actions=[
-                "run_stage5",
-                "verify_stage5_orientation",
-                "inject_if_verified",
-            ],
-            stage5_allowed=True,
-            use_orientation_prompt=False,
-            fallback_to_baseline=False,
-            agent_signals=signals,
-        )
-
-    if shadow_enabled:
-        return _decision_payload(
-            dataset="open6dor",
-            controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
             task_type="manipulation",
             question_type_or_mode=mode,
             applicable=False,
-            decision="shadow_stage5_for_debug",
-            decision_reason=stage5_gate_reason or "baseline_only_mode",
-            selected_execution_mode="stage5_shadow_only",
-            selected_actions=[
-                "run_stage5",
-                "verify_stage5_orientation",
-                "record_shadow_outcome",
-            ],
-            stage5_allowed=True,
+            decision="skip_stage5_unknown_family",
+            decision_reason=pscr_block_reason,
+            selected_execution_mode="baseline_only",
+            selected_actions=["fallback_to_baseline_reasoning"],
+            stage5_allowed=False,
             use_orientation_prompt=False,
             fallback_to_baseline=True,
             agent_signals=signals,
         )
 
+    if family == "part_axis_left_right" and not checkpoint_is_available:
+        pscr_block_reason = "part_axis_left_right_no_checkpoint_shadow_only"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
+        return _decision_payload(
+            dataset="open6dor",
+            controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
+            task_type="manipulation",
+            question_type_or_mode=mode,
+            applicable=False,
+            decision="skip_stage5_due_to_missing_checkpoint",
+            decision_reason=pscr_block_reason,
+            selected_execution_mode="baseline_only",
+            selected_actions=["fallback_to_baseline_reasoning"],
+            stage5_allowed=False,
+            use_orientation_prompt=False,
+            fallback_to_baseline=True,
+            agent_signals=signals,
+        )
+
+    if not checkpoint_is_available:
+        pscr_block_reason = "missing_checkpoint"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
+        return _decision_payload(
+            dataset="open6dor",
+            controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
+            task_type="manipulation",
+            question_type_or_mode=mode,
+            applicable=False,
+            decision="skip_stage5_due_to_missing_checkpoint",
+            decision_reason=pscr_block_reason,
+            selected_execution_mode="baseline_only",
+            selected_actions=["fallback_to_baseline_reasoning"],
+            stage5_allowed=False,
+            use_orientation_prompt=False,
+            fallback_to_baseline=True,
+            agent_signals=signals,
+        )
+
+    if family not in {
+        "upright_vertical",
+        "flat_upside_down_lying_flat",
+        "plug_cap_sideways",
+        "part_axis_left_right",
+    }:
+        pscr_block_reason = "unsupported_family"
+        signals["pscr_block_reason"] = pscr_block_reason
+        signals["rule_v3_block_reason"] = pscr_block_reason
+        return _decision_payload(
+            dataset="open6dor",
+            controller=OPEN6DOR_CONTROLLER,
+            policy_version=policy_version,
+            task_type="manipulation",
+            question_type_or_mode=mode,
+            applicable=False,
+            decision="skip_stage5_due_to_mode_gating",
+            decision_reason=pscr_block_reason,
+            selected_execution_mode="baseline_only",
+            selected_actions=["fallback_to_baseline_reasoning"],
+            stage5_allowed=False,
+            use_orientation_prompt=False,
+            fallback_to_baseline=True,
+            agent_signals=signals,
+        )
+
+    if fallback_required:
+        signals["pscr_fallback_override"] = True
+        signals["rule_v3_allowed_by_fallback_override"] = True
+    if raw_confidence is None:
+        signals["parser_confidence_missing"] = True
+
+    decision_reason = "conditional_verify_mode"
+    if fallback_required:
+        decision_reason = "pscr_allows_fallback_required_with_verified_stage5"
+    elif raw_confidence is None:
+        decision_reason = "parser_confidence_missing_but_allowed_by_pscr_verified"
+    signals["pscr_block_reason"] = ""
+    signals["rule_v3_block_reason"] = ""
     return _decision_payload(
         dataset="open6dor",
         controller=OPEN6DOR_CONTROLLER,
+        policy_version=policy_version,
         task_type="manipulation",
         question_type_or_mode=mode,
-        applicable=False,
-        decision="skip_stage5_due_to_mode_gating",
-        decision_reason=stage5_gate_reason or "baseline_only_mode",
-        selected_execution_mode="baseline_only",
-        selected_actions=["fallback_to_baseline_reasoning"],
-        stage5_allowed=False,
+        applicable=True,
+        decision="use_stage5_conditional_verify",
+        decision_reason=decision_reason,
+        selected_execution_mode="stage5_conditional_verified",
+        selected_actions=[
+            "run_stage5",
+            "verify_stage5_orientation",
+            "inject_if_verified",
+        ],
+        stage5_allowed=True,
         use_orientation_prompt=False,
-        fallback_to_baseline=True,
+        fallback_to_baseline=False,
         agent_signals=signals,
     )
 

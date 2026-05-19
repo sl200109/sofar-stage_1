@@ -436,6 +436,20 @@
                       "notes":  "已新增 analysis/run_open6dor_subset_ablation.py 与 tests/test_open6dor_ablation_runner.py；支持 dry-run/eval-only/skip-existing/max-tasks 切片、method 独立输出目录、subset mirror evaluator、ablation_summary 与 error_breakdown 汇总。"
                   },
                   {
+                      "id":  "stage5_open6dor_rule_v3_verified_policy",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "实现 Open6DOR Stage5 agent policy: rule_v3_verified",
+                      "notes":  "已在 semantic_orientation_agent.py / open6dor_perception.py 接入 rule_v3_verified，保持 rule_v2 默认与旧行为不变；新增 tests/test_open6dor_rule_v3_agent.py，ablation runner 已可识别并为 pscr_rule_v3_verified 生成 --agent-policy rule_v3_verified。"
+                  },
+                  {
+                      "id":  "stage5_open6dor_family_mapper_expansion",
+                      "owner":  "local",
+                      "status":  "done",
+                      "title":  "扩展 Open6DOR Stage5 family mapper 并加入 part-axis shadow-only family",
+                      "notes":  "已在 open6dor_perception.py 扩展 upright/flat/plug/part_axis_left_right/unknown 映射，新增 part-axis shadow-only 路由与 family-level summary 统计，并补 tests/test_open6dor_stage5_family_mapper.py。"
+                  },
+                  {
                       "id":  "stage5_open6dor_paper_core_120_formal_eval",
                       "owner":  "server",
                       "status":  "todo",
@@ -450,39 +464,18 @@
                       "notes":  "用户已改用 V100，本地此前临时加入的低显存/OOM retry/CUDA cache cleanup 特化逻辑已回退，不再作为当前服务器评测代码路径。"
                   },
                   {
-                      "id":  "open6dor_part_axis_expert_training",
-                      "owner":  "server",
-                      "status":  "done",
-                      "title":  "构建 part_axis_left_right expert 训练与评估入口",
-                      "notes":  "本地已添加 dataset builder、routing test、semantic-safe derivation、part-axis geometric consistency helper；服务器回传 subset400_refilled 已训练 checkpoint：stage5_open6dor_part_axis_expert_round1_subset400_refilled/stage5_pilot_best.pth，final_test_mean_cosine=0.852286。"
-                  },
-                  {
-                      "id":  "open6dor_part_axis_pscr_verified_only_eval",
-                      "owner":  "server",
-                      "status":  "todo",
-                      "title":  "只运行 pscr_verified + part-axis expert 的 paper_core_120 official eval",
-                      "notes":  "baseline_only 昨日已有 120-case 结果，不重复跑 baseline；下一步只跑 pscr_verified，使用 part-axis checkpoint 后与 baseline 6DoF pos=0.6167 / rot=0.2750 / overall=0.2000 手动对比。"
-                  },
-                  {
-                      "id":  "open6dor_pscr_mode_prior_safe_derivation",
+                      "id":  "open6dor_unify_pscr_verified_policy",
                       "owner":  "local",
                       "status":  "done",
-                      "title":  "实现 pscr_mode_prior_safe 派生结果",
-                      "notes":  "已改 derive_open6dor_pscr_semantic_safe_results.py：默认复制 baseline result，只按 orientation_mode / instruction / task path 和 Stage5 记录中的显式状态或 part-axis x 主导轴约束修正 target_orientation；不读取 eval_6dof.json、不读取 official pass/fail、不修改 evaluator。输出 pscr_mode_prior_safe/eval_dataset_root 与 selection.json。"
+                      "title":  "统一 Open6DOR PSCR agent policy 为 pscr_verified",
+                      "notes":  "已合并 rule_v2/rule_v3 为唯一 PSCR policy，保留 verifier-gated injection，修复 fallback route early-return。"
                   },
                   {
-                      "id":  "open6dor_icpc_mode_prior_completion",
+                      "id":  "open6dor_oracle_axis_error_analysis",
                       "owner":  "local",
                       "status":  "done",
-                      "title":  "新增 ICPC mode-prior orientation completion 派生方法",
-                      "notes":  "新增 analysis/derive_open6dor_icpc_mode_prior_results.py 和本地测试；ICPC is a baseline-preserving orientation completion method, not PSCR, not Stage5, and not semantic-safe gating. 服务器下一步只需派生 icpc_mode_prior 结果并跑 official evaluator。"
-                  },
-                  {
-                      "id":  "open6dor_ictc_transform_prior_completion",
-                      "owner":  "local",
-                      "status":  "done",
-                      "title":  "新增 ICTC transform_matrix rotation completion 派生方法",
-                      "notes":  "新增 analysis/derive_open6dor_ictc_transform_prior_results.py 和本地测试。ICTC is a baseline-preserving transform_matrix rotation completion method. It is not PSCR, not Stage5, not semantic-safe gating, and not the old ICPC target_orientation patch. 服务器下一步只需派生 ictc_transform_prior 结果并跑 official evaluator。"
+                      "title":  "新增 Open6DOR oracle 与 axis error 诊断脚本",
+                      "notes":  "已新增 analyze_open6dor_oracle_and_axis_errors.py，用于基于已有 baseline/pscr 结果输出 oracle union、family/mode/semantic breakdown、gated-global 指标与 sign-flip ablation；本地 py_compile 和 unittest 已通过。"
                   }
               ]
 }
